@@ -26,6 +26,9 @@ interface SortableGroupProps {
   deleteGroup: (
     formData: FormData,
   ) => Promise<{ error?: string; success?: boolean }>;
+  updateGroup?: (
+    formData: FormData,
+  ) => Promise<{ error?: string; success?: boolean }>;
   itemIdToOpen: string | null;
   onItemOpened: () => void;
 }
@@ -40,6 +43,7 @@ export default function SortableGroup({
   reorderItems,
   deleteItem,
   deleteGroup,
+  updateGroup,
   itemIdToOpen,
   onItemOpened,
 }: SortableGroupProps) {
@@ -100,6 +104,7 @@ export default function SortableGroup({
             reorderItems={reorderItems}
             deleteItem={deleteItem}
             deleteGroup={deleteGroup}
+            updateGroup={updateGroup}
             itemIdToOpen={itemIdToOpen}
             onItemOpened={onItemOpened}
           />

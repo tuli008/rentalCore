@@ -3,6 +3,14 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  DndContext,
+  DragEndEvent,
+  useDroppable,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import type { QuoteWithItems } from "@/lib/quotes";
 import {
   getItemAvailabilityBreakdown,
@@ -13,6 +21,8 @@ import {
 import { generateQuotePDF } from "@/lib/pdfGenerator";
 import { confirmQuotation } from "@/app/actions/quotes";
 import AddItemModal from "./AddItemModal";
+import QuoteDropZone from "./QuoteDropZone";
+import QuoteSidebar from "./QuoteSidebar";
 
 interface QuoteDetailPageProps {
   initialQuote: QuoteWithItems;
@@ -45,9 +55,16 @@ export default function QuoteDetailPage({
   const [quote, setQuote] = useState<QuoteWithItems>(initialQuote);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [draggedItem, setDraggedItem] = useState<any>(null);
+  const [showQuantityModal, setShowQuantityModal] = useState(false);
+  const [quantityModalItem, setQuantityModalItem] = useState<any>(null);
+  const [quantityModalQuantity, setQuantityModalQuantity] = useState("1");
+  const [quantityModalPrice, setQuantityModalPrice] = useState("");
   const [itemAvailabilities, setItemAvailabilities] = useState<
     Map<string, ItemAvailabilityBreakdown>
   >(new Map());
+
+  const sensors = useSensors(useSensor(PointerSensor));
   // Local quantity state for instant UI updates (quoteItemId -> quantity string)
   const [localQuantities, setLocalQuantities] = useState<Map<string, string>>(
     new Map(),
@@ -266,6 +283,55 @@ export default function QuoteDetailPage({
     setIsConfirming(false);
   };
 
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over) return;
+
+    // Check if dropped on the quote drop zone
+    if (over.id === "quote-drop-zone") {
+      const itemData = active.data.current;
+      if (itemData?.type === "inventory-item" && itemData?.item) {
+        // Open quantity selector modal for the dragged item (same as clicking "Add")
+        setQuantityModalItem(itemData.item);
+        setQuantityModalPrice(itemData.item.price.toFixed(2));
+        setQuantityModalQuantity("1");
+        setShowQuantityModal(true);
+        // Close the add item modal if it's open
+        setShowAddItemModal(false);
+      }
+    }
+  };
+
+  const handleQuantityModalConfirm = async () => {
+    if (!quantityModalItem) return;
+
+    const qty = parseInt(quantityModalQuantity, 10);
+    if (Number.isNaN(qty) || qty <= 0) {
+      alert("Please enter a valid quantity");
+      return;
+    }
+
+    const price = parseFloat(quantityModalPrice);
+    if (Number.isNaN(price) || price < 0) {
+      alert("Please enter a valid price");
+      return;
+    }
+
+    await handleAddItem(
+      quantityModalItem.id,
+      quantityModalItem.name,
+      price,
+      qty,
+    );
+
+    // Reset and close modal
+    setShowQuantityModal(false);
+    setQuantityModalItem(null);
+    setQuantityModalQuantity("1");
+    setQuantityModalPrice("");
+  };
+
   const numberOfDays = Math.ceil(
     (new Date(quote.end_date).getTime() -
       new Date(quote.start_date).getTime()) /
@@ -293,8 +359,11 @@ export default function QuoteDetailPage({
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-6xl mx-auto p-4 sm:p-8">
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <div className="min-h-screen bg-gray-50 flex flex-row flex-nowrap w-full">
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-y-auto min-w-0 order-1">
+          <div className="max-w-6xl mx-auto p-4 sm:p-8">
         {/* Header */}
         <div className="mb-6">
           <Link
@@ -378,22 +447,16 @@ export default function QuoteDetailPage({
 
         {/* Items Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6 mb-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <div className="mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Items</h2>
-            <button
-              onClick={() => setShowAddItemModal(true)}
-              className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
-            >
-              + Add Item
-            </button>
           </div>
 
           {quote.items.length === 0 ? (
-            <div className="text-center text-gray-500 py-8 text-sm">
-              No items yet. Click "+ Add Item" to get started.
-            </div>
+            <QuoteDropZone isEmpty={true} />
           ) : (
-            <div className="space-y-3">
+            <div>
+              <QuoteDropZone isEmpty={false} />
+              <div className="mt-4 space-y-3">
               {quote.items.map((item) => {
                 const breakdown = itemAvailabilities.get(item.item_id) || {
                   available: 0,
@@ -624,6 +687,7 @@ export default function QuoteDetailPage({
                   </div>
                 );
               })}
+              </div>
             </div>
           )}
         </div>
@@ -724,9 +788,27 @@ export default function QuoteDetailPage({
             )}
           </div>
         </div>
+          </div>
+        </div>
+
+        {/* Right Sidebar */}
+        <QuoteSidebar
+          onAddItem={handleAddItem}
+          existingQuoteItems={quote.items}
+          quoteContext={{
+            quoteId: quote.id,
+            startDate: quote.start_date,
+            endDate: quote.end_date,
+          }}
+          quoteSummary={{
+            totalItems: quote.items.length,
+            subtotal,
+            numberOfDays,
+          }}
+        />
       </div>
 
-      {/* Add Item Modal */}
+      {/* Add Item Modal (fallback for mobile) */}
       {showAddItemModal && (
         <AddItemModal
           onClose={() => setShowAddItemModal(false)}
@@ -739,6 +821,134 @@ export default function QuoteDetailPage({
           }}
         />
       )}
-    </div>
+
+      {/* Quantity Selector Modal (for drag and drop) */}
+      {showQuantityModal && quantityModalItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Add {quantityModalItem.name}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowQuantityModal(false);
+                  setQuantityModalItem(null);
+                }}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-md transition-colors"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Item Info */}
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                {quantityModalItem.group_name && (
+                  <div className="text-sm text-gray-600 mb-1">
+                    <span className="inline-block px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded mr-2">
+                      {quantityModalItem.group_name}
+                    </span>
+                  </div>
+                )}
+                <div className="text-sm text-gray-600">
+                  Available:{" "}
+                  <span className="font-mono">
+                    {quantityModalItem.effectiveAvailable !== undefined
+                      ? quantityModalItem.effectiveAvailable
+                      : quantityModalItem.available || 0}{" "}
+                    / {quantityModalItem.total || 0}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quantity Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Quantity *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={quantityModalQuantity}
+                  onChange={(e) => setQuantityModalQuantity(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+                {parseInt(quantityModalQuantity, 10) >
+                  (quantityModalItem.effectiveAvailable !== undefined
+                    ? quantityModalItem.effectiveAvailable
+                    : quantityModalItem.available || 0) && (
+                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
+                    <p className="text-sm text-red-800">
+                      Quantity exceeds available (
+                      {quantityModalItem.effectiveAvailable !== undefined
+                        ? quantityModalItem.effectiveAvailable
+                        : quantityModalItem.available || 0}
+                      )
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Unit Price Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Unit Price ($) *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={quantityModalPrice}
+                  onChange={(e) => setQuantityModalPrice(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Default: ${quantityModalItem.price.toFixed(2)} - You can modify this
+                </p>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 justify-end mt-6 pt-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowQuantityModal(false);
+                  setQuantityModalItem(null);
+                }}
+                className="px-4 py-2.5 text-sm text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleQuantityModalConfirm}
+                disabled={
+                  !quantityModalQuantity ||
+                  parseInt(quantityModalQuantity, 10) <= 0 ||
+                  !quantityModalPrice ||
+                  parseFloat(quantityModalPrice) < 0
+                }
+                className="px-4 py-2.5 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add to Quote
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </DndContext>
   );
 }

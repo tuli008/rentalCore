@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition, useMemo } from "react";
+import { useState, useEffect, useTransition, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import {
@@ -67,6 +67,9 @@ interface InventoryGroupCardProps {
   deleteGroup: (
     formData: FormData,
   ) => Promise<{ error?: string; success?: boolean }>;
+  updateGroup?: (
+    formData: FormData,
+  ) => Promise<{ error?: string; success?: boolean }>;
   itemIdToOpen: string | null;
   onItemOpened: () => void;
 }
@@ -82,6 +85,7 @@ export default function InventoryGroupCard({
   reorderItems,
   deleteItem,
   deleteGroup,
+  updateGroup,
   itemIdToOpen,
   onItemOpened,
 }: InventoryGroupCardProps) {
@@ -142,6 +146,11 @@ export default function InventoryGroupCard({
   const [createItemError, setCreateItemError] = useState<string | null>(null);
   const [showCreateItemModal, setShowCreateItemModal] = useState(false);
   const [pendingItemName, setPendingItemName] = useState("");
+  const [showGroupMenu, setShowGroupMenu] = useState(false);
+  const [showRenameGroupModal, setShowRenameGroupModal] = useState(false);
+  const [renameGroupName, setRenameGroupName] = useState("");
+  const [renameGroupError, setRenameGroupError] = useState<string | null>(null);
+  const groupMenuRef = useRef<HTMLDivElement>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Only render DndContext on client to avoid hydration mismatch
@@ -731,6 +740,62 @@ export default function InventoryGroupCard({
 
   const isUncategorized = group.name === "Uncategorized";
 
+  // Close group menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        groupMenuRef.current &&
+        !groupMenuRef.current.contains(event.target as Node)
+      ) {
+        setShowGroupMenu(false);
+      }
+    };
+
+    if (showGroupMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showGroupMenu]);
+
+  const handleRenameGroup = async () => {
+    // Clear any previous errors first
+    setRenameGroupError(null);
+
+    // Validate input
+    const trimmedName = renameGroupName.trim();
+    if (!trimmedName) {
+      setRenameGroupError("Group name is required");
+      return;
+    }
+
+    if (!updateGroup) {
+      setRenameGroupError("Update group function is not available");
+      return;
+    }
+
+    // If name hasn't changed, just close the modal
+    if (trimmedName === group.name) {
+      setShowRenameGroupModal(false);
+      setRenameGroupName("");
+      setShowGroupMenu(false);
+      return;
+    }
+
+    // Attempt to update
+    const formData = new FormData();
+    formData.append("group_id", group.id);
+    formData.append("name", trimmedName);
+
+    const result = await updateGroup(formData);
+    if (result.success) {
+      setShowRenameGroupModal(false);
+      setRenameGroupName("");
+      setShowGroupMenu(false);
+    } else {
+      setRenameGroupError(result.error || "Failed to rename group");
+    }
+  };
+
   // Derive availability for drawer from actual data sources
   const drawerAvailability = useMemo(() => {
     if (!localItem) return { available: 0, total: 0 };
@@ -783,15 +848,52 @@ export default function InventoryGroupCard({
           </span>
         </div>
         {!isUncategorized && (
-          <button
-            onClick={() => {
-              setDeleteError(null);
-              setShowDeleteGroupModal(true);
-            }}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
-          >
-            Delete Group
-          </button>
+          <div ref={groupMenuRef} className="relative">
+            <button
+              onClick={() => setShowGroupMenu(!showGroupMenu)}
+              className="p-1.5 rounded-md hover:bg-gray-100 transition-colors"
+              aria-label="Group options"
+            >
+              <svg
+                className="w-5 h-5 text-gray-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"
+                />
+              </svg>
+            </button>
+            {showGroupMenu && (
+              <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 z-50">
+                <button
+                  onClick={() => {
+                    setShowRenameGroupModal(true);
+                    setRenameGroupName(group.name);
+                    setRenameGroupError(null); // Clear any previous errors
+                    setShowGroupMenu(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  Rename group
+                </button>
+                <button
+                  onClick={() => {
+                    setDeleteError(null);
+                    setShowDeleteGroupModal(true);
+                    setShowGroupMenu(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  Delete group
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -1060,6 +1162,98 @@ export default function InventoryGroupCard({
           }
         }}
       />
+
+      {/* Rename Group Modal */}
+      {showRenameGroupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Rename Group
+              </h3>
+              <button
+                onClick={() => {
+                  setShowRenameGroupModal(false);
+                  setRenameGroupName("");
+                  setRenameGroupError(null);
+                }}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-md transition-colors"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {renameGroupError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+                  <p className="text-sm text-red-800">{renameGroupError}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Group Name
+                </label>
+                <input
+                  type="text"
+                  value={renameGroupName}
+                  onChange={(e) => {
+                    setRenameGroupName(e.target.value);
+                    setRenameGroupError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleRenameGroup();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setShowRenameGroupModal(false);
+                      setRenameGroupName("");
+                      setRenameGroupError(null);
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-4 border-t border-gray-200 mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRenameGroupModal(false);
+                  setRenameGroupName("");
+                  setRenameGroupError(null);
+                }}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleRenameGroup}
+                disabled={!renameGroupName.trim()}
+                className="px-4 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

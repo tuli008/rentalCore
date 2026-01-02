@@ -282,3 +282,55 @@ export async function deleteGroup(formData: FormData) {
   revalidatePath("/");
   return { success: true };
 }
+
+export async function updateGroup(formData: FormData) {
+  const groupId = String(formData.get("group_id"));
+  const name = String(formData.get("name") || "").trim();
+  const tenantId = "11111111-1111-1111-1111-111111111111";
+
+  if (!groupId || !name) {
+    return { error: "Group ID and name are required" };
+  }
+
+  // Check if group name already exists (excluding current group)
+  const { data: existingGroup, error: checkError } = await supabase
+    .from("inventory_groups")
+    .select("id")
+    .eq("name", name)
+    .eq("tenant_id", tenantId)
+    .neq("id", groupId)
+    .maybeSingle();
+
+  if (checkError) {
+    console.error("[updateGroup] Error checking for duplicate name:", {
+      action: "updateGroup",
+      group_id: groupId,
+      name,
+      error: checkError.message,
+    });
+    return { error: "Failed to check for duplicate name" };
+  }
+
+  if (existingGroup) {
+    return { error: "A group with this name already exists" };
+  }
+
+  const { error: updateError } = await supabase
+    .from("inventory_groups")
+    .update({ name })
+    .eq("id", groupId)
+    .eq("tenant_id", tenantId);
+
+  if (updateError) {
+    console.error("[updateGroup] Error updating group:", {
+      action: "updateGroup",
+      group_id: groupId,
+      name,
+      error: updateError.message,
+    });
+    return { error: "Failed to update group" };
+  }
+
+  revalidatePath("/");
+  return { success: true };
+}

@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { supabase } from "@/lib/supabase";
 import { getInventoryData } from "@/lib/inventory";
 import InventoryPageContent from "./components/InventoryPageContent";
+import { updateGroup } from "./actions/groups";
 
 /* =========================
    CREATE GROUP
@@ -742,31 +743,10 @@ export default async function Home() {
   const inventoryGroups = await getInventoryData();
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4 sm:p-8">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-4 sm:mb-6">
-          Inventory List
-        </h1>
-
-        <form
-          action={createGroup}
-          className="mb-6 sm:mb-8 p-4 bg-white rounded-lg shadow-sm border border-gray-200"
-        >
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-2">
-            <input
-              name="name"
-              placeholder="New group name"
-              required
-              className="flex-1 w-full px-4 py-2.5 sm:py-2 bg-white text-gray-900 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-blue-600 text-white rounded">
-              Add Group
-            </button>
-          </div>
-        </form>
-
-        <InventoryPageContent
+    <main className="min-h-screen bg-gray-50">
+      <InventoryPageContent
           groups={inventoryGroups}
+          createGroup={createGroup}
           createItem={createItem}
           updateItem={updateItem}
           updateStock={updateStock}
@@ -776,8 +756,8 @@ export default async function Home() {
           reorderItems={reorderItems}
           deleteItem={deleteItem}
           deleteGroup={deleteGroup}
+          updateGroup={updateGroup}
         />
-      </div>
     </main>
   );
 }
