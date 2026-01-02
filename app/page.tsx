@@ -62,9 +62,31 @@ async function createItem(
   const name = String(formData.get("name") || "").trim();
   const groupId = String(formData.get("group_id"));
   const isSerialized = formData.get("is_serialized") === "on";
+  const priceStr = formData.get("price");
+  const price = priceStr ? Number(priceStr) : 0;
+  const totalQuantityStr = formData.get("total_quantity");
+  const totalQuantity = totalQuantityStr ? Number(totalQuantityStr) : 0;
+  const outOfServiceQuantityStr = formData.get("out_of_service_quantity");
+  const outOfServiceQuantity = outOfServiceQuantityStr
+    ? Number(outOfServiceQuantityStr)
+    : 0;
   const tenantId = "11111111-1111-1111-1111-111111111111";
 
   if (!name || !groupId) {
+    return { ok: false, error: "VALIDATION_ERROR" };
+  }
+
+  if (price < 0 || Number.isNaN(price)) {
+    return { ok: false, error: "VALIDATION_ERROR" };
+  }
+
+  if (
+    totalQuantity < 0 ||
+    Number.isNaN(totalQuantity) ||
+    outOfServiceQuantity < 0 ||
+    Number.isNaN(outOfServiceQuantity) ||
+    outOfServiceQuantity > totalQuantity
+  ) {
     return { ok: false, error: "VALIDATION_ERROR" };
   }
 
@@ -107,16 +129,21 @@ async function createItem(
     return { ok: false, error: "SERVER_ERROR" };
   }
 
-  const { error: insertError } = await supabase.from("inventory_items").insert({
-    name,
-    category: "General",
-    price: 0,
-    group_id: groupId,
-    is_serialized: isSerialized,
-    active: true,
-    tenant_id: tenantId,
-    display_order: (max?.display_order ?? 0) + 1,
-  });
+  // Insert item
+  const { data: newItem, error: insertError } = await supabase
+    .from("inventory_items")
+    .insert({
+      name,
+      category: "General",
+      price,
+      group_id: groupId,
+      is_serialized: isSerialized,
+      active: true,
+      tenant_id: tenantId,
+      display_order: (max?.display_order ?? 0) + 1,
+    })
+    .select("id")
+    .single();
 
   if (insertError) {
     // Check for unique constraint violation (duplicate name)
@@ -131,6 +158,28 @@ async function createItem(
       error: insertError.message,
     });
     return { ok: false, error: "SERVER_ERROR" };
+  }
+
+  // Create stock record for non-serialized items if quantity > 0
+  if (!isSerialized && totalQuantity > 0 && newItem) {
+    const { error: stockError } = await supabase
+      .from("inventory_stock")
+      .insert({
+        item_id: newItem.id,
+        location_id: "22222222-2222-2222-2222-222222222222", // Main Warehouse
+        total_quantity: totalQuantity,
+        out_of_service_quantity: outOfServiceQuantity,
+        tenant_id: tenantId,
+      });
+
+    if (stockError) {
+      console.error("[createItem] Error creating stock:", {
+        action: "createItem",
+        item_id: newItem.id,
+        error: stockError.message,
+      });
+      // Don't fail the whole operation if stock creation fails
+    }
   }
 
   revalidatePath("/");

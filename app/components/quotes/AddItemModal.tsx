@@ -42,6 +42,7 @@ export default function AddItemModal({
   const [isSearching, setIsSearching] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [quantity, setQuantity] = useState("1");
+  const [unitPrice, setUnitPrice] = useState("");
   const [showQuantityPrompt, setShowQuantityPrompt] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -91,6 +92,7 @@ export default function AddItemModal({
       return;
     }
     setSelectedItem(item);
+    setUnitPrice(item.price.toFixed(2)); // Set default price
     setShowQuantityPrompt(true);
     setSearchQuery(item.name);
     setSearchResults([]);
@@ -134,11 +136,18 @@ export default function AddItemModal({
       return;
     }
 
-    onAddItem(selectedItem.id, selectedItem.name, selectedItem.price, qty);
+    const price = parseFloat(unitPrice);
+    if (Number.isNaN(price) || price < 0) {
+      alert("Please enter a valid price");
+      return;
+    }
+
+    onAddItem(selectedItem.id, selectedItem.name, price, qty);
     // Reset state
     setSelectedItem(null);
     setShowQuantityPrompt(false);
     setQuantity("1");
+    setUnitPrice("");
     setSearchQuery("");
   };
 
@@ -266,7 +275,7 @@ export default function AddItemModal({
                     {selectedItem.name}
                   </div>
                   <div className="text-sm text-gray-600">
-                    Price: ${selectedItem.price.toFixed(2)}
+                    Default Price: ${selectedItem.price.toFixed(2)}
                   </div>
                   {selectedItem.effectiveAvailable !== undefined && (
                     <div className="text-sm text-gray-600 mt-1">
@@ -288,7 +297,7 @@ export default function AddItemModal({
               {/* Quantity Input */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity
+                  Quantity *
                 </label>
                 <input
                   type="number"
@@ -335,6 +344,25 @@ export default function AddItemModal({
                   </div>
                 )}
               </div>
+
+              {/* Unit Price Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Unit Price ($) *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={unitPrice}
+                  onChange={(e) => setUnitPrice(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter unit price"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Default: ${selectedItem?.price.toFixed(2) || "0.00"} - You can modify this
+                </p>
+              </div>
             </>
           )}
         </div>
@@ -348,6 +376,7 @@ export default function AddItemModal({
                   setShowQuantityPrompt(false);
                   setSelectedItem(null);
                   setQuantity("1");
+                  setUnitPrice("");
                 }}
                 className="w-full sm:w-auto px-4 py-2.5 text-sm text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
               >

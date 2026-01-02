@@ -19,6 +19,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import CreateItemModal from "./CreateItemModal";
 import { CSS } from "@dnd-kit/utilities";
 import type { InventoryGroup, InventoryItem } from "@/lib/inventory";
 import { supabase } from "@/lib/supabase";
@@ -139,6 +140,8 @@ export default function InventoryGroupCard({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [createItemError, setCreateItemError] = useState<string | null>(null);
+  const [showCreateItemModal, setShowCreateItemModal] = useState(false);
+  const [pendingItemName, setPendingItemName] = useState("");
 
   // Only render DndContext on client to avoid hydration mismatch
   useEffect(() => {
@@ -792,89 +795,37 @@ export default function InventoryGroupCard({
         </div>
       )}
 
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const formData = new FormData(e.currentTarget);
-          const name = String(formData.get("name") || "").trim();
-          const isSerialized = formData.get("is_serialized") === "on";
-
-          if (!name) return;
-
-          // Clear any previous error
-          setCreateItemError(null);
-
-          // Reset form
-          e.currentTarget.reset();
-
-          // Call server action FIRST - don't add optimistically
-          try {
-            const result = await createItem(formData);
-            if (!result.ok) {
-              // Show error immediately - no temp item to remove
-              if (result.error === "DUPLICATE_NAME") {
-                setCreateItemError(
-                  `An item with the name "${name}" already exists`,
-                );
-              } else if (result.error === "VALIDATION_ERROR") {
-                setCreateItemError("Name and Group ID are required");
-              } else {
-                setCreateItemError("Failed to create item. Please try again.");
-              }
-
-              // Auto-hide error after 5 seconds
-              setTimeout(() => {
-                setCreateItemError(null);
-              }, 5000);
-              return;
-            }
-            // Success - add optimistically AFTER server confirms
-            const tempId = `temp-${Date.now()}`;
-            const newItem: InventoryItem = {
-              id: tempId,
-              name,
-              group_id: group.id,
-              is_serialized: isSerialized,
-              price: 0,
-              available: 0,
-              total: 0,
-            };
-
-            setLocalItems([...items, newItem]);
-            // Revalidation will replace temp item with real one
-          } catch (error) {
-            setCreateItemError("Failed to create item. Please try again.");
-            setTimeout(() => {
-              setCreateItemError(null);
-            }, 5000);
-          }
-        }}
-        className="mb-4 p-3 bg-gray-50 rounded-md"
-      >
+      <div className="mb-4 p-3 bg-gray-50 rounded-md">
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-2 sm:items-center">
-          <input type="hidden" name="group_id" value={group.id} />
           <input
-            name="name"
+            type="text"
+            value={pendingItemName}
+            onChange={(e) => setPendingItemName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (pendingItemName.trim()) {
+                  setShowCreateItemModal(true);
+                }
+              }
+            }}
             placeholder="New item name"
-            required
             className="flex-1 w-full sm:min-w-[200px] px-3 py-2.5 sm:py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
-          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer whitespace-nowrap">
-            <input
-              type="checkbox"
-              name="is_serialized"
-              className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
-            />{" "}
-            Serialized
-          </label>
           <button
-            type="submit"
-            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
+            type="button"
+            onClick={() => {
+              if (pendingItemName.trim()) {
+                setShowCreateItemModal(true);
+              }
+            }}
+            disabled={!pendingItemName.trim()}
+            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Add Item
           </button>
         </div>
-      </form>
+      </div>
 
       {mounted ? (
         <DndContext
@@ -1029,6 +980,51 @@ export default function InventoryGroupCard({
         }}
         onConfirmDeleteItem={handleDeleteItem}
         onConfirmDeleteGroup={handleDeleteGroup}
+      />
+
+      {/* Create Item Modal */}
+      <CreateItemModal
+        isOpen={showCreateItemModal}
+        groupId={group.id}
+        groupName={group.name}
+        initialName={pendingItemName}
+        onClose={() => {
+          setShowCreateItemModal(false);
+          setPendingItemName("");
+        }}
+        onCreateItem={async (formData) => {
+          // Clear any previous error
+          setCreateItemError(null);
+
+          try {
+            const result = await createItem(formData);
+            if (!result.ok) {
+              const name = String(formData.get("name") || "").trim();
+              // Show error immediately
+              if (result.error === "DUPLICATE_NAME") {
+                setCreateItemError(
+                  `An item with the name "${name}" already exists`,
+                );
+              } else if (result.error === "VALIDATION_ERROR") {
+                setCreateItemError("Please fill in all required fields correctly");
+              } else {
+                setCreateItemError("Failed to create item. Please try again.");
+              }
+
+              // Auto-hide error after 5 seconds
+              setTimeout(() => {
+                setCreateItemError(null);
+              }, 5000);
+              throw new Error(result.error || "Failed to create item");
+            }
+            // Success - revalidation will update the list
+            setPendingItemName("");
+            setShowCreateItemModal(false);
+          } catch (error) {
+            // Error already handled above
+            throw error;
+          }
+        }}
       />
     </div>
   );

@@ -149,6 +149,7 @@ export default function QuoteDetailPage({
       formData.append("quote_id", quote.id);
       formData.append("item_id", itemId);
       formData.append("quantity", quantity.toString());
+      formData.append("unit_price", unitPrice.toString());
 
       const result = await addQuoteItem(formData);
       if (result.success) {

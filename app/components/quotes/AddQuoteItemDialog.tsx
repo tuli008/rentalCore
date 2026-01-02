@@ -11,7 +11,11 @@ interface InventoryItem {
 
 interface AddQuoteItemDialogProps {
   onClose: () => void;
-  onAddItem: (itemId: string, quantity: number) => Promise<void>;
+  onAddItem: (
+    itemId: string,
+    quantity: number,
+    unitPrice: number,
+  ) => Promise<void>;
 }
 
 export default function AddQuoteItemDialog({
@@ -23,6 +27,7 @@ export default function AddQuoteItemDialog({
   const [isSearching, setIsSearching] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [quantity, setQuantity] = useState("1");
+  const [unitPrice, setUnitPrice] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -52,6 +57,7 @@ export default function AddQuoteItemDialog({
 
   const handleSelectItem = (item: InventoryItem) => {
     setSelectedItem(item);
+    setUnitPrice(item.price.toFixed(2)); // Set default price
     setSearchQuery(item.name);
     setSearchResults([]);
   };
@@ -60,10 +66,19 @@ export default function AddQuoteItemDialog({
     if (!selectedItem) return;
 
     const qty = parseInt(quantity, 10);
-    if (Number.isNaN(qty) || qty <= 0) return;
+    if (Number.isNaN(qty) || qty <= 0) {
+      alert("Please enter a valid quantity");
+      return;
+    }
+
+    const price = parseFloat(unitPrice);
+    if (Number.isNaN(price) || price < 0) {
+      alert("Please enter a valid price");
+      return;
+    }
 
     setIsAdding(true);
-    await onAddItem(selectedItem.id, qty);
+    await onAddItem(selectedItem.id, qty, price);
     setIsAdding(false);
     onClose();
   };
@@ -141,32 +156,52 @@ export default function AddQuoteItemDialog({
             </div>
           )}
 
-          {/* Selected Item */}
+          {/* Selected Item Details */}
           {selectedItem && (
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
-              <div className="font-medium text-gray-900 mb-1">
-                {selectedItem.name}
+            <>
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                <div className="font-medium text-gray-900 mb-2">
+                  {selectedItem.name}
+                </div>
+                <div className="text-sm text-gray-600">
+                  Default Price: ${selectedItem.price.toFixed(2)}
+                </div>
               </div>
-              <div className="text-sm text-gray-600">
-                Price: ${selectedItem.price.toFixed(2)}
-              </div>
-            </div>
-          )}
 
-          {/* Quantity */}
-          {selectedItem && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Quantity
-              </label>
-              <input
-                type="number"
-                min="1"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+              {/* Quantity */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Quantity *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter quantity"
+                />
+              </div>
+
+              {/* Unit Price */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Unit Price ($) *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={unitPrice}
+                  onChange={(e) => setUnitPrice(e.target.value)}
+                  className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter unit price"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Default: ${selectedItem.price.toFixed(2)} - You can modify this
+                </p>
+              </div>
+            </>
           )}
         </div>
 

@@ -220,6 +220,10 @@ export async function addQuoteItem(formData: FormData) {
   const quoteId = String(formData.get("quote_id"));
   const itemId = String(formData.get("item_id"));
   const quantity = Number(formData.get("quantity"));
+  const customPrice = formData.get("unit_price");
+  const unitPrice = customPrice
+    ? Number(customPrice)
+    : null; // If custom price provided, use it; otherwise fetch from item
 
   if (!quoteId || !itemId || !quantity || quantity <= 0) {
     return { error: "Quote ID, item ID, and valid quantity are required" };
@@ -241,6 +245,11 @@ export async function addQuoteItem(formData: FormData) {
     });
     return { error: "Failed to fetch item" };
   }
+
+  // Use custom price if provided, otherwise use item's current price
+  const priceToUse = unitPrice !== null && !Number.isNaN(unitPrice) && unitPrice >= 0
+    ? unitPrice
+    : item.price;
 
   // Validate availability (read-only check)
   let available = 0;
@@ -276,7 +285,7 @@ export async function addQuoteItem(formData: FormData) {
     quote_id: quoteId,
     item_id: itemId,
     quantity,
-    unit_price_snapshot: item.price,
+    unit_price_snapshot: priceToUse,
   });
 
   if (error) {

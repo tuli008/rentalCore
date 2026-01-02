@@ -122,13 +122,18 @@ export default function QuoteDetailDrawer({
     }
   };
 
-  const handleAddItem = async (itemId: string, quantity: number) => {
+  const handleAddItem = async (
+    itemId: string,
+    quantity: number,
+    unitPrice: number,
+  ) => {
     if (!quote) return;
 
     const formData = new FormData();
     formData.append("quote_id", quote.id);
     formData.append("item_id", itemId);
     formData.append("quantity", quantity.toString());
+    formData.append("unit_price", unitPrice.toString());
 
     const result = await addQuoteItem(formData);
     if (result.success) {
