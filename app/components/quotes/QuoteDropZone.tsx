@@ -6,9 +6,10 @@ import { useMemo } from "react";
 interface QuoteDropZoneProps {
   isEmpty: boolean;
   isReadOnly?: boolean;
+  children?: React.ReactNode;
 }
 
-export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDropZoneProps) {
+export default function QuoteDropZone({ isEmpty, isReadOnly = false, children }: QuoteDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "quote-drop-zone",
     disabled: isReadOnly,
@@ -16,12 +17,12 @@ export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDrop
 
   // Memoize to prevent unnecessary re-renders
   const dropZoneClasses = useMemo(() => 
-    `rounded-lg border-2 border-dashed transition-all duration-200 ${
+    `rounded-lg transition-all duration-200 ${
       isOver
-        ? "border-blue-500 bg-blue-50 scale-[1.02]"
+        ? "border-2 border-blue-500 bg-blue-50/50"
         : isEmpty
-          ? "border-gray-300 bg-gray-50 min-h-[200px]"
-          : "border-gray-200 bg-gray-50/30 min-h-[60px]"
+          ? "border-2 border-dashed border-gray-300 bg-gray-50 min-h-[200px]"
+          : "border-0 min-h-0"
     }`,
     [isOver, isEmpty]
   );
@@ -29,9 +30,12 @@ export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDrop
   return (
     <div
       ref={setNodeRef}
-      className={dropZoneClasses}
-      // Ensure drop zone is always interactive
-      style={{ pointerEvents: isReadOnly ? 'none' : 'auto' }}
+      className={`${dropZoneClasses} ${!isEmpty ? 'relative w-full' : ''}`}
+      // Ensure drop zone is always interactive and covers full area
+      style={{ 
+        pointerEvents: isReadOnly ? 'none' : 'auto',
+        minHeight: !isEmpty ? '100%' : undefined,
+      }}
     >
       {isEmpty && (
         <div className="flex flex-col items-center justify-center h-full py-12 px-4">
@@ -64,10 +68,15 @@ export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDrop
         </div>
       )}
       {!isEmpty && isOver && (
-        <div className="flex items-center justify-center py-4">
-          <p className="text-sm text-blue-700 font-medium">
-            Drop here to add item to quote
+        <div className="absolute inset-0 flex items-center justify-center bg-blue-50/90 rounded-lg z-[100] pointer-events-none border-2 border-blue-500">
+          <p className="text-base text-blue-700 font-semibold bg-white px-6 py-3 rounded-lg shadow-xl border-2 border-blue-500">
+            ✓ Drop here to add item to quote
           </p>
+        </div>
+      )}
+      {!isEmpty && (
+        <div className="relative z-0">
+          {children}
         </div>
       )}
     </div>

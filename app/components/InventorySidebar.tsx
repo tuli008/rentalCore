@@ -10,11 +10,15 @@ import {
 interface InventorySidebarProps {
   onItemSelect: (itemId: string, groupId: string) => void;
   groups: Array<{ id: string; name: string }>;
+  variant?: "desktop" | "mobile";
+  onClose?: () => void;
 }
 
 export default function InventorySidebar({
   onItemSelect,
   groups,
+  variant = "desktop",
+  onClose,
 }: InventorySidebarProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -117,13 +121,26 @@ export default function InventorySidebar({
 
 
   return (
-    <div className="w-80 lg:w-96 bg-white border-l border-gray-200 flex flex-col h-screen flex-shrink-0 overflow-y-auto">
+    <div
+      className={
+        variant === "mobile"
+          ? "w-full bg-white flex flex-col"
+          : "w-full h-full bg-white border-l border-gray-200 flex flex-col overflow-y-auto"
+      }
+    >
       <div className="p-4 space-y-4">
         {/* Panel Title */}
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">
-            Filters
-          </h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+          {variant === "mobile" && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sm text-gray-600 hover:text-gray-900"
+            >
+              Close
+            </button>
+          )}
         </div>
 
         {/* Search Bar - Live Search */}

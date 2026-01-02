@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { InventoryGroup } from "@/lib/inventory";
 import SortableGroupsList from "./SortableGroupsList";
 import InventorySidebar from "./InventorySidebar";
@@ -52,6 +52,19 @@ export default function InventoryPageContent({
   const [sortOrder, setSortOrder] = useState<SortOrder>("a-z");
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [pageSize, setPageSize] = useState<number>(2);
+  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  // Detect desktop vs mobile
+  useEffect(() => {
+    const checkIsDesktop = () => {
+      setIsDesktop(window.innerWidth >= 1024);
+    };
+    
+    checkIsDesktop();
+    window.addEventListener('resize', checkIsDesktop);
+    return () => window.removeEventListener('resize', checkIsDesktop);
+  }, []);
 
   // Calculate total items across all groups
   const totalItems = groups.reduce((sum, group) => sum + group.items.length, 0);
@@ -71,20 +84,34 @@ export default function InventoryPageContent({
   }));
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-row flex-nowrap w-full">
+    <div className="min-h-screen bg-gray-50 w-full overflow-x-hidden">
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto min-w-0 order-1">
-        <div className="max-w-7xl mx-auto p-4 sm:p-8">
+      <div className={`w-full ${isDesktop ? 'lg:mr-96' : ''}`}>
+        <div className="w-full max-w-7xl mx-auto p-4 sm:p-8">
           {/* Header with Toolbar */}
           <div className="mb-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
                 Inventory Items
               </h1>
+              {/* Debug marker to confirm latest UI is loaded */}
+              <span className="text-xs text-gray-400 font-mono">
+                mobile-ui:v6
+              </span>
             </div>
             
             {/* Toolbar */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-4">
+              {/* Mobile: Filters button */}
+              <div className="flex items-center justify-end lg:hidden">
+                <button
+                  type="button"
+                  onClick={() => setIsMobileFiltersOpen(true)}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+                >
+                  Filters
+                </button>
+              </div>
               {/* Add Group Form */}
               <form action={createGroup}>
                 <div className="flex flex-col sm:flex-row gap-3 sm:gap-2">
@@ -202,11 +229,53 @@ export default function InventoryPageContent({
         </div>
       </div>
 
-      {/* Right Sidebar */}
-      <InventorySidebar
-        onItemSelect={handleItemSelect}
-        groups={groupsForSidebar}
-      />
+      {/* Right Sidebar (Desktop) - Only render on desktop screens */}
+      {isDesktop && (
+        <div className="fixed right-0 top-12 bottom-0 w-96 z-40 hidden lg:block">
+          <InventorySidebar
+            onItemSelect={handleItemSelect}
+            groups={groupsForSidebar}
+            variant="desktop"
+          />
+        </div>
+      )}
+
+      {/* Filters Drawer (Mobile) */}
+      {isMobileFiltersOpen && (
+        <div 
+          className="fixed inset-0 z-[9999] lg:hidden"
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+        >
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setIsMobileFiltersOpen(false)}
+            aria-hidden="true"
+          />
+          {/* Drawer Panel */}
+          <div 
+            className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl max-h-[85vh] overflow-hidden"
+            style={{ maxHeight: '85vh' }}
+          >
+            {/* Drag handle */}
+            <div className="flex justify-center py-3 border-b border-gray-100">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            </div>
+            {/* Scrollable content */}
+            <div className="overflow-y-auto" style={{ maxHeight: 'calc(85vh - 48px)' }}>
+              <InventorySidebar
+                onItemSelect={(itemId, groupId) => {
+                  handleItemSelect(itemId, groupId);
+                  setIsMobileFiltersOpen(false);
+                }}
+                groups={groupsForSidebar}
+                variant="mobile"
+                onClose={() => setIsMobileFiltersOpen(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   searchInventoryItems,
   getAllInventoryItemsForQuote,
@@ -41,6 +41,8 @@ interface QuoteSidebarProps {
     numberOfDays: number;
   };
   isReadOnly?: boolean;
+  variant?: "desktop" | "mobile";
+  onClose?: () => void;
 }
 
 export default function QuoteSidebar({
@@ -49,6 +51,8 @@ export default function QuoteSidebar({
   quoteContext,
   quoteSummary,
   isReadOnly = false,
+  variant = "desktop",
+  onClose,
 }: QuoteSidebarProps) {
   const [activeTab, setActiveTab] = useState<"summary" | "search" | "quick">(
     "search",
@@ -91,41 +95,65 @@ export default function QuoteSidebar({
     }));
   }, [allItems]);
 
-  // Load all items on mount
+  // Memoize quoteContext string to prevent unnecessary reloads
+  const quoteContextKey = useMemo(() => {
+    if (!quoteContext) return null;
+    return `${quoteContext.quoteId}-${quoteContext.startDate}-${quoteContext.endDate}`;
+  }, [quoteContext?.quoteId, quoteContext?.startDate, quoteContext?.endDate]);
+
+  // Load all items on mount or when quote context actually changes
   useEffect(() => {
+    if (activeTab !== "search" || !quoteContextKey) return;
+
+    let isMounted = true;
     const loadItems = async () => {
       setIsLoading(true);
       try {
-        const items = await getAllInventoryItemsForQuote(quoteContext);
-        setAllItems(items);
+        const items = await getAllInventoryItemsForQuote(quoteContext!);
+        if (isMounted) {
+          setAllItems(items);
+        }
       } catch (error) {
         console.error("Error loading items:", error);
-        setAllItems([]);
+        if (isMounted) {
+          setAllItems([]);
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
-    if (activeTab === "search") {
-      loadItems();
-    }
-  }, [quoteContext, activeTab]);
+    loadItems();
 
-  // Handle search
+    return () => {
+      isMounted = false;
+    };
+  }, [quoteContextKey, activeTab, quoteContext]);
+
+  // Handle search - only reload when search query changes, not when quoteContext changes
   useEffect(() => {
-    if (activeTab !== "search") return;
+    if (activeTab !== "search" || !quoteContext) return;
 
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
     if (searchQuery.trim().length < 2) {
-      // If search is cleared, reload all items
-      const loadItems = async () => {
-        const items = await getAllInventoryItemsForQuote(quoteContext);
-        setAllItems(items);
-      };
-      loadItems();
+      // If search is cleared, reload all items (but only if we don't already have them)
+      if (allItems.length === 0) {
+        const loadItems = async () => {
+          try {
+            const items = await getAllInventoryItemsForQuote(quoteContext);
+            setAllItems(items);
+          } catch (error) {
+            console.error("Error loading items:", error);
+            setAllItems([]);
+          }
+        };
+        loadItems();
+      }
       return;
     }
 
@@ -147,11 +175,11 @@ export default function QuoteSidebar({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [searchQuery, quoteContext, activeTab]);
+  }, [searchQuery, activeTab]); // Removed quoteContext from dependencies
 
-  // Quick add search
+  // Quick add search - only depends on search query, not quoteContext
   useEffect(() => {
-    if (activeTab !== "quick" || !quickAddProduct.trim()) {
+    if (activeTab !== "quick" || !quickAddProduct.trim() || !quoteContext) {
       setQuickAddResults([]);
       return;
     }
@@ -181,7 +209,7 @@ export default function QuoteSidebar({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [quickAddProduct, quoteContext, activeTab]);
+  }, [quickAddProduct, activeTab]); // Removed quoteContext from dependencies
 
   // Filter items by selected groups and adjust availability
   const filteredItems = useMemo(() => {
@@ -295,9 +323,24 @@ export default function QuoteSidebar({
   };
 
   return (
-    <div className="w-80 lg:w-96 bg-white border-l border-gray-200 flex flex-col h-screen flex-shrink-0 overflow-y-auto order-2">
+    <div
+      className={
+        variant === "mobile"
+          ? "w-full bg-white flex flex-col max-h-[80vh] overflow-y-auto"
+          : "w-full lg:w-96 bg-white border-l border-gray-200 flex flex-col lg:h-screen flex-shrink-0 overflow-y-auto order-2"
+      }
+    >
       {/* Tabs */}
-      <div className="flex border-b border-gray-200">
+      <div className="flex border-b border-gray-200 items-center">
+        {variant === "mobile" && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-3 text-sm text-gray-600 hover:text-gray-900"
+          >
+            Close
+          </button>
+        )}
         <button
           onClick={() => setActiveTab("summary")}
           className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${

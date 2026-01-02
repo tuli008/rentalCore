@@ -2,7 +2,7 @@
 
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 interface InventoryItem {
   id: string;
@@ -31,6 +31,22 @@ export default function DraggableItemCard({
   onAddClick,
   isReadOnly = false,
 }: DraggableItemCardProps) {
+  // Detect if we're on a mobile device
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    // Check if device is mobile (touch device or small screen)
+    const checkMobile = () => {
+      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      const isSmallScreen = window.innerWidth < 1024; // lg breakpoint
+      setIsMobile(isTouchDevice || isSmallScreen);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   const {
     attributes,
     listeners,
@@ -43,7 +59,8 @@ export default function DraggableItemCard({
       type: "inventory-item",
       item: item,
     },
-    disabled: isReadOnly,
+    // Disable drag on mobile devices or if read-only
+    disabled: isReadOnly || isMobile,
   });
 
   // Memoize style to prevent unnecessary re-renders
@@ -51,7 +68,12 @@ export default function DraggableItemCard({
     transform: CSS.Translate.toString(transform),
     opacity: isDragging ? 0.2 : 1,
     transition: isDragging ? undefined : "opacity 0.15s ease",
-  }), [transform, isDragging]);
+    // Only prevent touch action on desktop (where drag is enabled)
+    // On mobile, allow normal touch behavior since drag is disabled
+    touchAction: (isMobile || isReadOnly) ? "auto" as const : "none" as const,
+    // Prevent text selection during drag on desktop
+    userSelect: (isMobile || isReadOnly) ? "auto" as const : "none" as const,
+  }), [transform, isDragging, isMobile, isReadOnly]);
 
 
   const isLowStock = effectiveAvailable === 0;
@@ -61,13 +83,14 @@ export default function DraggableItemCard({
     <div
       ref={setNodeRef}
       style={dragStyle}
-      {...(isReadOnly ? {} : { ...attributes, ...listeners })}
+      {...(isReadOnly || isMobile ? {} : { ...attributes, ...listeners })}
       className={`p-4 hover:bg-gray-50 transition-colors border-b border-gray-200 last:border-b-0 ${
-        isReadOnly ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+        isReadOnly || isMobile ? "cursor-default" : "cursor-grab active:cursor-grabbing"
       }`}
-      // Prevent text selection during drag
+      // Prevent text selection during drag on desktop only
       onMouseDown={(e) => {
-        if (!isReadOnly && e.button === 0) {
+        if (!isReadOnly && !isMobile) {
+          // Prevent text selection during drag
           e.preventDefault();
         }
       }}

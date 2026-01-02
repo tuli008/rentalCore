@@ -9,13 +9,13 @@ export default function Navigation() {
   const isActive = (path: string) => pathname === path;
 
   return (
-    <nav className="bg-blue-600 border-b border-blue-700">
+    <nav className="bg-blue-600 border-b border-blue-700 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-col sm:flex-row h-auto sm:h-16 py-3 sm:py-0">
-          <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-8">
+        <div className="h-12 flex items-center">
+          <div className="flex items-center gap-6 overflow-x-auto w-full">
             <Link
               href="/"
-              className={`inline-flex items-center px-1 pt-1 pb-2 sm:pb-1 text-sm font-medium border-b-2 transition-colors ${
+              className={`inline-flex items-center px-1 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 isActive("/")
                   ? "border-white text-white"
                   : "border-transparent text-blue-100 hover:text-white hover:border-blue-300"
@@ -25,7 +25,7 @@ export default function Navigation() {
             </Link>
             <Link
               href="/quotes"
-              className={`inline-flex items-center px-1 pt-1 pb-2 sm:pb-1 text-sm font-medium border-b-2 transition-colors ${
+              className={`inline-flex items-center px-1 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 isActive("/quotes")
                   ? "border-white text-white"
                   : "border-transparent text-blue-100 hover:text-white hover:border-blue-300"

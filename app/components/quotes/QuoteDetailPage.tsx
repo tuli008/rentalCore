@@ -6,10 +6,14 @@ import Link from "next/link";
 import {
   DndContext,
   DragEndEvent,
+  DragMoveEvent,
+  DragOverEvent,
   DragStartEvent,
   DragOverlay,
+  MeasuringStrategy,
   useDroppable,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -69,15 +73,35 @@ export default function QuoteDetailPage({
   >(new Map());
   const [isLoadingAvailabilities, setIsLoadingAvailabilities] = useState(true);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastOverIdRef = useRef<string | null>(null);
+  const lastOverAtMsRef = useRef<number>(0);
+  const isDraggingRef = useRef(false);
+  const deferredRefreshRef = useRef(false);
+  const refreshTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const draggedItemRef = useRef<any>(null);
 
-  // Configure sensors with activation distance to prevent accidental drags and improve stability
-  // Use a smaller distance for better responsiveness
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      const isSmallScreen = window.innerWidth < 1024; // lg breakpoint
+      setIsMobile(isTouchDevice || isSmallScreen);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Configure sensors - remove activation constraint for maximum reliability
+  // This ensures drag starts immediately on mouse down
+  // Disable sensors on mobile
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 3, // Require 3px movement before drag starts (more responsive)
-      },
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
   // Local quantity state for instant UI updates (quoteItemId -> quantity string)
   const [localQuantities, setLocalQuantities] = useState<Map<string, string>>(
@@ -87,6 +111,48 @@ export default function QuoteDetailPage({
   const debounceTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   // Track previous item IDs to prevent unnecessary availability re-fetches
   const prevItemIdsStringRef = useRef<string>('');
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 2500);
+  }, []);
+
+  const scheduleRefresh = useCallback(
+    (key: string, delayMs: number) => {
+      const existing = refreshTimersRef.current.get(key);
+      if (existing) {
+        clearTimeout(existing);
+      }
+
+      // Never refresh while dragging; it remounts DOM and breaks drop detection.
+      if (isDraggingRef.current) {
+        deferredRefreshRef.current = true;
+        return;
+      }
+
+      const t = setTimeout(() => {
+        refreshTimersRef.current.delete(key);
+        router.refresh();
+      }, delayMs);
+      refreshTimersRef.current.set(key, t);
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+      refreshTimersRef.current.forEach((t) => clearTimeout(t));
+      refreshTimersRef.current.clear();
+    };
+  }, []);
 
   // Sync quote when initialQuote changes (after router.refresh())
   useEffect(() => {
@@ -233,8 +299,8 @@ export default function QuoteDetailPage({
         
         // Show message last, after all visual updates
         setTimeout(() => {
-          alert(
-            `"${itemName}" is already in the quote. Please update the quantity of the existing item instead.`
+          showToast(
+            `"${itemName}" is already in the quote. Update the existing quantity.`
           );
         }, 300);
       }, 100);
@@ -277,9 +343,7 @@ export default function QuoteDetailPage({
       if (result.success) {
         // Refresh in background after delay to sync with server
         // Use a longer delay to batch multiple adds
-        setTimeout(() => {
-          router.refresh();
-        }, 1500);
+        scheduleRefresh(`add-${itemId}`, 1500);
       } else if (result.error) {
         // Revert optimistic update on error
         setQuote((prevQuote) => ({
@@ -291,7 +355,7 @@ export default function QuoteDetailPage({
           newMap.delete(optimisticItem.id);
           return newMap;
         });
-        alert(result.error);
+        showToast(result.error);
       }
     } catch (error) {
       // Revert on error
@@ -304,9 +368,9 @@ export default function QuoteDetailPage({
         newMap.delete(optimisticItem.id);
         return newMap;
       });
-      alert("Failed to add item. Please try again.");
+      showToast("Failed to add item. Please try again.");
     }
-  }, [quote.items, quote.id, router]);
+  }, [quote.items, quote.id, scheduleRefresh, showToast]);
 
   // Debounced save function with instant UI updates
   const saveQuantity = useCallback(async (quoteItemId: string, quantity: number) => {
@@ -336,11 +400,7 @@ export default function QuoteDetailPage({
       if (result.success) {
         // Silently refresh in background without blocking UI
         // Use a longer delay to batch multiple updates
-        const refreshTimer = setTimeout(() => {
-          router.refresh();
-        }, 2000);
-        // Store timer to cancel if another update happens
-        debounceTimersRef.current.set(`refresh-${quoteItemId}`, refreshTimer);
+        scheduleRefresh(`qty-${quoteItemId}`, 2000);
       } else if (result.error) {
         // Revert optimistic update on error
         const item = quote.items.find((i) => i.id === quoteItemId);
@@ -357,7 +417,7 @@ export default function QuoteDetailPage({
             return newMap;
           });
         }
-        alert(result.error);
+        showToast(result.error);
       }
     } catch (error) {
       // Revert on error
@@ -376,7 +436,7 @@ export default function QuoteDetailPage({
         });
       }
     }
-  }, [quote.items, quote.id, router]);
+  }, [quote.items, quote.id, scheduleRefresh, showToast, updateQuoteItem]);
 
   // Update local quantity and schedule debounced save
   const updateQuantity = useCallback((quoteItemId: string, newQuantity: number) => {
@@ -423,14 +483,12 @@ export default function QuoteDetailPage({
     const result = await deleteQuoteItem(formData);
     if (result.success) {
       // Refresh after delay to batch updates
-      setTimeout(() => {
-        router.refresh();
-      }, 500);
+      scheduleRefresh(`delete-${quoteItemId}`, 500);
     } else {
       // Revert on error
-      router.refresh();
+      scheduleRefresh(`delete-revert-${quoteItemId}`, 0);
     }
-  }, [router]);
+  }, [deleteQuoteItem, scheduleRefresh]);
 
   const handleDeleteQuote = async () => {
     if (
@@ -448,7 +506,7 @@ export default function QuoteDetailPage({
     if (result.success) {
       router.push("/quotes");
     } else if (result.error) {
-      alert(result.error);
+      showToast(result.error);
     }
   };
 
@@ -459,50 +517,98 @@ export default function QuoteDetailPage({
 
     const result = await confirmQuotation(formData);
     if (result.ok) {
-      router.refresh();
-      alert(result.message || "Quotation confirmed successfully!");
+      scheduleRefresh("confirm", 0);
+      showToast(result.message || "Quotation confirmed successfully!");
     } else {
-      alert(result.error || "Failed to confirm quotation.");
+      showToast(result.error || "Failed to confirm quotation.");
     }
     setIsConfirming(false);
   };
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
+    isDraggingRef.current = true;
+    if (refreshTimersRef.current.size > 0) {
+      deferredRefreshRef.current = true;
+      refreshTimersRef.current.forEach((t) => clearTimeout(t));
+      refreshTimersRef.current.clear();
+    }
     const { active } = event;
     const itemData = active.data.current;
     if (itemData?.type === "inventory-item" && itemData?.item) {
       // Set active item immediately for drag overlay
       setActiveDraggedItem(itemData.item);
+      // Persist dragged item data in case the draggable unmounts mid-drag
+      draggedItemRef.current = itemData.item;
     }
   }, []);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    if (event.over?.id) {
+      lastOverIdRef.current = String(event.over.id);
+      lastOverAtMsRef.current = Date.now();
+    }
+  }, []);
+
+  // DragOver only fires when `over` changes; DragMove fires continuously.
+  // Using DragMove makes drop detection stable even during fast drags / heavy re-renders.
+  const handleDragMove = useCallback((event: DragMoveEvent) => {
+    if (event.over?.id) {
+      lastOverIdRef.current = String(event.over.id);
+      lastOverAtMsRef.current = Date.now();
+    }
+  }, []);
+
+  const handleDragCancel = useCallback(() => {
+    setActiveDraggedItem(null);
+    isDraggingRef.current = false;
+    lastOverIdRef.current = null;
+    lastOverAtMsRef.current = 0;
+    draggedItemRef.current = null;
+
+    if (deferredRefreshRef.current) {
+      deferredRefreshRef.current = false;
+      scheduleRefresh("deferred", 250);
+    }
+  }, [scheduleRefresh]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     
-    // Store item data before clearing overlay (avoid stale data)
+    // Store item data IMMEDIATELY before any state changes
     const itemData = active.data.current;
-    const draggedItem = itemData?.type === "inventory-item" ? itemData.item : null;
+    const draggedItem =
+      (itemData?.type === "inventory-item" ? itemData.item : null) ??
+      draggedItemRef.current;
     
     // Clear active dragged item immediately
     setActiveDraggedItem(null);
+    isDraggingRef.current = false;
+    draggedItemRef.current = null;
 
-    // Early return if no valid drop target or item
-    if (!over) {
+    // DnD-kit sometimes reports `over` as null at drop time due to layout shifts.
+    // Fall back to the last known valid over-id for stability.
+    const overId = (over?.id ? String(over.id) : lastOverIdRef.current) ?? null;
+    lastOverIdRef.current = null;
+    const lastOverAgeMs = Date.now() - (lastOverAtMsRef.current || 0);
+    lastOverAtMsRef.current = 0;
+
+    // If drop-time `over` gets lost due to a render, allow a short fallback window.
+    const isInDropZone =
+      overId === "quote-drop-zone" ||
+      (lastOverAgeMs > 0 && lastOverAgeMs < 250 && overId === "quote-drop-zone");
+
+    if (!isInDropZone) {
+      // If this happens while the overlay says "Drop here", it means drop target resolution failed.
       return;
     }
 
-    // Check if dropped on the quote drop zone
-    if (over.id !== "quote-drop-zone") {
-      return;
-    }
-
-    // Validate dragged item
+    // Validate dragged item exists
     if (!draggedItem) {
-      console.warn("[DragEnd] No dragged item data");
+      // Item unmounted mid-drag; should be prevented by draggedItemRef fallback.
       return;
     }
 
-    // Don't process if quote is read-only (check quote status directly)
+    // Don't process if quote is read-only
     if (quote.status === "accepted") {
       return;
     }
@@ -515,10 +621,9 @@ export default function QuoteDetailPage({
     );
     
     if (existingItem) {
-      // Item already exists - show feedback immediately (no delays)
+      // Item already exists - show feedback
       setHighlightedItemId(existingItem.id);
       
-      // Scroll and show message after brief delay
       setTimeout(() => {
         const itemElement = document.getElementById(`quote-item-${existingItem.id}`);
         if (itemElement) {
@@ -527,24 +632,28 @@ export default function QuoteDetailPage({
         setTimeout(() => {
           setHighlightedItemId(null);
         }, 2000);
-        alert(
-          `"${draggedItem.name}" is already in the quote. Please update the quantity of the existing item instead.`
+        showToast(
+          `"${draggedItem.name}" is already in the quote. Update the existing quantity.`
         );
-      }, 100);
+      }, 50);
       return;
     }
     
-    // Item doesn't exist - open modal immediately (batched state updates)
-    // React 18+ automatically batches these updates
-    // Use setTimeout to ensure state updates happen after drag cleanup
-    setTimeout(() => {
+    // Item doesn't exist - open modal immediately
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
       setQuantityModalItem(draggedItem);
       setQuantityModalPrice(draggedItem.price.toFixed(2));
       setQuantityModalQuantity("1");
       setShowQuantityModal(true);
       setShowAddItemModal(false);
-    }, 0);
-  }, [quote.items, quote.status]);
+    });
+
+    if (deferredRefreshRef.current) {
+      deferredRefreshRef.current = false;
+      scheduleRefresh("deferred", 250);
+    }
+  }, [quote.items, quote.status, showToast]);
 
   const handleQuantityModalConfirm = useCallback(async () => {
     if (!quantityModalItem) return;
@@ -587,6 +696,13 @@ export default function QuoteDetailPage({
       (1000 * 60 * 60 * 24),
   );
 
+  // Memoize quoteContext to prevent sidebar reloads
+  const memoizedQuoteContext = useMemo(() => ({
+    quoteId: quote.id,
+    startDate: quote.start_date,
+    endDate: quote.end_date,
+  }), [quote.id, quote.start_date, quote.end_date]);
+
   // Calculate subtotal using local quantities for real-time updates
   const subtotal = useMemo(() => {
     return quote.items.reduce((sum, item) => {
@@ -609,13 +725,17 @@ export default function QuoteDetailPage({
 
   const isReadOnly = quote.status === "accepted";
 
-  return (
-    <DndContext 
-      sensors={sensors} 
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="min-h-screen bg-gray-50 flex flex-row flex-nowrap w-full">
+  // Content wrapper - same for both mobile and desktop
+  const content = (
+    <>
+    <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row w-full overflow-x-hidden">
+        {toastMessage ? (
+          <div className="fixed top-4 right-4 z-[1000]">
+            <div className="bg-gray-900 text-white text-sm px-4 py-2 rounded-md shadow-lg">
+              {toastMessage}
+            </div>
+          </div>
+        ) : null}
         {/* Main Content Area */}
         <div className="flex-1 overflow-y-auto min-w-0 order-1">
           <div className="max-w-6xl mx-auto p-4 sm:p-8">
@@ -677,6 +797,13 @@ export default function QuoteDetailPage({
               </p>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="lg:hidden w-full sm:w-auto px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+              >
+                Products
+              </button>
               <span
                 className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium text-center sm:text-left whitespace-nowrap ${
                   quote.status === "draft"
@@ -763,8 +890,7 @@ export default function QuoteDetailPage({
               </table>
             </div>
           ) : (
-            <div className="relative">
-              <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly} />
+            <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly}>
               {/* Only render items when availability data is loaded to prevent flash of incorrect data */}
               {isLoadingAvailabilities ? (
                 <div className="flex items-center justify-center py-12 mt-4">
@@ -1019,7 +1145,7 @@ export default function QuoteDetailPage({
               })}
               </div>
               )}
-            </div>
+            </QuoteDropZone>
           )}
         </div>
 
@@ -1122,22 +1248,49 @@ export default function QuoteDetailPage({
           </div>
         </div>
 
-        {/* Right Sidebar */}
-        <QuoteSidebar
-          onAddItem={handleAddItem}
-          existingQuoteItems={quote.items}
-          quoteContext={{
-            quoteId: quote.id,
-            startDate: quote.start_date,
-            endDate: quote.end_date,
-          }}
-          quoteSummary={{
-            totalItems: quote.items.length,
-            subtotal,
-            numberOfDays,
-          }}
-          isReadOnly={quote.status === "accepted"}
-        />
+        {/* Right Sidebar (Desktop) */}
+        <div className="hidden lg:block">
+          <QuoteSidebar
+            onAddItem={handleAddItem}
+            existingQuoteItems={quote.items}
+            quoteContext={memoizedQuoteContext}
+            quoteSummary={{
+              totalItems: quote.items.length,
+              subtotal,
+              numberOfDays,
+            }}
+            isReadOnly={quote.status === "accepted"}
+            variant="desktop"
+          />
+        </div>
+
+        {/* Products Drawer (Mobile) */}
+        {isMobileSidebarOpen && (
+          <div className="fixed inset-0 z-[950] lg:hidden">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/40"
+              aria-label="Close products"
+              onClick={() => setIsMobileSidebarOpen(false)}
+            />
+            <div className="absolute inset-x-0 bottom-0 bg-white rounded-t-2xl shadow-2xl border-t border-gray-200">
+              <div className="h-1 w-12 bg-gray-300 rounded-full mx-auto mt-2" />
+              <QuoteSidebar
+                onAddItem={handleAddItem}
+                existingQuoteItems={quote.items}
+                quoteContext={memoizedQuoteContext}
+                quoteSummary={{
+                  totalItems: quote.items.length,
+                  subtotal,
+                  numberOfDays,
+                }}
+                isReadOnly={quote.status === "accepted"}
+                variant="mobile"
+                onClose={() => setIsMobileSidebarOpen(false)}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Add Item Modal (fallback for mobile) */}
@@ -1281,8 +1434,38 @@ export default function QuoteDetailPage({
           </div>
         </div>
       )}
-      
-      {/* Drag Overlay - shows dragged item above all other elements */}
+    </>
+  );
+
+  // On mobile, render without DndContext (drag disabled)
+  if (isMobile) {
+    return (
+      <>
+        {content}
+        {toastMessage ? (
+          <div className="fixed top-4 right-4 z-[1000]">
+            <div className="bg-gray-900 text-white text-sm px-4 py-2 rounded-md shadow-lg">
+              {toastMessage}
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  // On desktop, render with DndContext (drag enabled)
+  return (
+    <DndContext 
+      sensors={sensors} 
+      collisionDetection={pointerWithin}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragMove={handleDragMove}
+      onDragCancel={handleDragCancel}
+      onDragEnd={handleDragEnd}
+    >
+      {content}
       <DragOverlay 
         zIndex={9999} 
         dropAnimation={null}
