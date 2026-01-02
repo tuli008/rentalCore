@@ -75,6 +75,110 @@ export async function deleteQuote(formData: FormData) {
     return { error: "Quote ID is required" };
   }
 
+  // Fetch quote with items and status before deleting
+  const { getQuoteWithItems } = await import("@/lib/quotes");
+  const quote = await getQuoteWithItems(quoteId);
+
+  if (!quote) {
+    return { error: "Quote not found" };
+  }
+
+  // If quote is accepted (confirmed), restore inventory for all items
+  if (quote.status === "accepted" && quote.items.length > 0) {
+    for (const item of quote.items) {
+      // Check if item is serialized
+      const { data: inventoryItem, error: itemError } = await supabase
+        .from("inventory_items")
+        .select("is_serialized")
+        .eq("id", item.item_id)
+        .eq("tenant_id", tenantId)
+        .single();
+
+      if (itemError || !inventoryItem) {
+        console.error(
+          `[deleteQuote] Error fetching item ${item.item_id}:`,
+          itemError,
+        );
+        continue;
+      }
+
+      if (inventoryItem.is_serialized) {
+        // For serialized items, change unit statuses from "out" back to "available"
+        const { data: outUnits, error: unitsError } = await supabase
+          .from("inventory_units")
+          .select("id")
+          .eq("item_id", item.item_id)
+          .eq("status", "out")
+          .limit(item.quantity);
+
+        if (unitsError) {
+          console.error(
+            `[deleteQuote] Error fetching units for item ${item.item_id}:`,
+            unitsError,
+          );
+        } else if (outUnits && outUnits.length >= item.quantity) {
+          const unitIds = outUnits.slice(0, item.quantity).map((u) => u.id);
+          const { error: updateUnitsError } = await supabase
+            .from("inventory_units")
+            .update({ status: "available" })
+            .in("id", unitIds);
+
+          if (updateUnitsError) {
+            console.error(
+              `[deleteQuote] Error updating units for item ${item.item_id}:`,
+              updateUnitsError,
+            );
+          }
+        }
+      } else {
+        // For non-serialized items, increase total_quantity in inventory_stock
+        const { data: stock, error: stockError } = await supabase
+          .from("inventory_stock")
+          .select("total_quantity, out_of_service_quantity")
+          .eq("item_id", item.item_id)
+          .single();
+
+        if (stockError && stockError.code !== "PGRST116") {
+          console.error(
+            `[deleteQuote] Error fetching stock for item ${item.item_id}:`,
+            stockError,
+          );
+        } else if (stock) {
+          const newTotalQuantity = stock.total_quantity + item.quantity;
+          const { error: updateStockError } = await supabase
+            .from("inventory_stock")
+            .update({ total_quantity: newTotalQuantity })
+            .eq("item_id", item.item_id);
+
+          if (updateStockError) {
+            console.error(
+              `[deleteQuote] Error updating stock for item ${item.item_id}:`,
+              updateStockError,
+            );
+          }
+        } else {
+          // Stock doesn't exist, create it with the restored quantity
+          const { error: insertStockError } = await supabase
+            .from("inventory_stock")
+            .insert({
+              item_id: item.item_id,
+              location_id: "22222222-2222-2222-2222-222222222222", // Main Warehouse
+              total_quantity: item.quantity,
+              out_of_service_quantity: 0,
+              tenant_id: tenantId,
+            });
+
+          if (insertStockError) {
+            console.error(
+              `[deleteQuote] Error creating stock for item ${item.item_id}:`,
+              insertStockError,
+            );
+          }
+        }
+      }
+    }
+  }
+
   // Delete quote items first (cascade should handle this, but being explicit)
   const { error: itemsError } = await supabase
     .from("quote_items")
@@ -107,6 +211,8 @@ export async function deleteQuote(formData: FormData) {
   }
 
   revalidatePath("/quotes");
+  revalidatePath("/"); // Revalidate inventory page to show restored availability
+
   return { success: true };
 }
 
@@ -190,16 +296,27 @@ export async function addQuoteItem(formData: FormData) {
 
 export async function updateQuoteItem(formData: FormData) {
   const quoteItemId = String(formData.get("quote_item_id"));
-  const quantity = Number(formData.get("quantity"));
+  const newQuantity = Number(formData.get("quantity"));
 
-  if (!quoteItemId || !quantity || quantity <= 0) {
+  if (!quoteItemId || !newQuantity || newQuantity <= 0) {
     return { error: "Quote item ID and valid quantity are required" };
   }
 
-  // Get quote item to find item_id and quote_id
+  // Get quote item with current quantity and quote status
   const { data: quoteItem, error: fetchError } = await supabase
     .from("quote_items")
-    .select("item_id, quote_id")
+    .select(
+      `
+      id,
+      item_id,
+      quote_id,
+      quantity,
+      quotes:quote_id (
+        id,
+        status
+      )
+    `,
+    )
     .eq("id", quoteItemId)
     .single();
 
@@ -207,20 +324,204 @@ export async function updateQuoteItem(formData: FormData) {
     return { error: "Quote item not found" };
   }
 
-  // Validate availability
-  const { data: item } = await supabase
+  const quote = quoteItem.quotes as any;
+  const quoteStatus = quote?.status;
+  const oldQuantity = quoteItem.quantity;
+  const itemId = quoteItem.item_id;
+  const quantityDifference = newQuantity - oldQuantity;
+
+  // Check if item is serialized
+  const { data: item, error: itemError } = await supabase
     .from("inventory_items")
     .select("is_serialized")
-    .eq("id", quoteItem.item_id)
+    .eq("id", itemId)
+    .eq("tenant_id", tenantId)
     .single();
 
-  if (item) {
+  if (itemError || !item) {
+    return { error: "Item not found" };
+  }
+
+  // If quote is accepted, handle inventory changes
+  if (quoteStatus === "accepted") {
+    if (quantityDifference < 0) {
+      // Quantity reduced - restore inventory
+      const restoreQuantity = Math.abs(quantityDifference);
+
+      if (item.is_serialized) {
+        // For serialized items, change unit statuses from "out" back to "available"
+        const { data: outUnits, error: unitsError } = await supabase
+          .from("inventory_units")
+          .select("id")
+          .eq("item_id", itemId)
+          .eq("status", "out")
+          .limit(restoreQuantity);
+
+        if (unitsError) {
+          console.error(
+            `[updateQuoteItem] Error fetching units for item ${itemId}:`,
+            unitsError,
+          );
+        } else if (outUnits && outUnits.length >= restoreQuantity) {
+          const unitIds = outUnits.slice(0, restoreQuantity).map((u) => u.id);
+          const { error: updateUnitsError } = await supabase
+            .from("inventory_units")
+            .update({ status: "available" })
+            .in("id", unitIds);
+
+          if (updateUnitsError) {
+            console.error(
+              `[updateQuoteItem] Error updating units for item ${itemId}:`,
+              updateUnitsError,
+            );
+          }
+        }
+      } else {
+        // For non-serialized items, increase total_quantity
+        const { data: stock, error: stockError } = await supabase
+          .from("inventory_stock")
+          .select("total_quantity, out_of_service_quantity")
+          .eq("item_id", itemId)
+          .single();
+
+        if (stockError && stockError.code !== "PGRST116") {
+          console.error(
+            `[updateQuoteItem] Error fetching stock for item ${itemId}:`,
+            stockError,
+          );
+        } else if (stock) {
+          const newTotalQuantity = stock.total_quantity + restoreQuantity;
+          const { error: updateStockError } = await supabase
+            .from("inventory_stock")
+            .update({ total_quantity: newTotalQuantity })
+            .eq("item_id", itemId);
+
+          if (updateStockError) {
+            console.error(
+              `[updateQuoteItem] Error updating stock for item ${itemId}:`,
+              updateStockError,
+            );
+          }
+        } else {
+          // Stock doesn't exist, create it with the restored quantity
+          const { error: insertStockError } = await supabase
+            .from("inventory_stock")
+            .insert({
+              item_id: itemId,
+              location_id: "22222222-2222-2222-2222-222222222222",
+              total_quantity: restoreQuantity,
+              out_of_service_quantity: 0,
+              tenant_id: tenantId,
+            });
+
+          if (insertStockError) {
+            console.error(
+              `[updateQuoteItem] Error creating stock for item ${itemId}:`,
+              insertStockError,
+            );
+          }
+        }
+      }
+    } else if (quantityDifference > 0) {
+      // Quantity increased - need to reduce inventory further
+      // Check availability (should include items already reserved in this quote)
+      let available = 0;
+      if (item.is_serialized) {
+        const { data: units } = await supabase
+          .from("inventory_units")
+          .select("status")
+          .eq("item_id", itemId);
+
+        if (units) {
+          available = units.filter((u) => u.status === "available").length;
+        }
+      } else {
+        const { data: stock } = await supabase
+          .from("inventory_stock")
+          .select("total_quantity, out_of_service_quantity")
+          .eq("item_id", itemId)
+          .single();
+
+        if (stock) {
+          available = stock.total_quantity - (stock.out_of_service_quantity || 0);
+        }
+      }
+
+      if (quantityDifference > available) {
+        return {
+          error: `Insufficient availability. Only ${available} available to add.`,
+        };
+      }
+
+      // Reduce inventory by the difference
+      if (item.is_serialized) {
+        const { data: availableUnits, error: unitsError } = await supabase
+          .from("inventory_units")
+          .select("id")
+          .eq("item_id", itemId)
+          .eq("status", "available")
+          .limit(quantityDifference);
+
+        if (unitsError) {
+          console.error(
+            `[updateQuoteItem] Error fetching units for item ${itemId}:`,
+            unitsError,
+          );
+        } else if (availableUnits && availableUnits.length >= quantityDifference) {
+          const unitIds = availableUnits
+            .slice(0, quantityDifference)
+            .map((u) => u.id);
+          const { error: updateUnitsError } = await supabase
+            .from("inventory_units")
+            .update({ status: "out" })
+            .in("id", unitIds);
+
+          if (updateUnitsError) {
+            console.error(
+              `[updateQuoteItem] Error updating units for item ${itemId}:`,
+              updateUnitsError,
+            );
+          }
+        }
+      } else {
+        const { data: stock, error: stockError } = await supabase
+          .from("inventory_stock")
+          .select("total_quantity, out_of_service_quantity")
+          .eq("item_id", itemId)
+          .single();
+
+        if (stockError && stockError.code !== "PGRST116") {
+          console.error(
+            `[updateQuoteItem] Error fetching stock for item ${itemId}:`,
+            stockError,
+          );
+        } else if (stock) {
+          const newTotalQuantity = Math.max(
+            0,
+            stock.total_quantity - quantityDifference,
+          );
+          const { error: updateStockError } = await supabase
+            .from("inventory_stock")
+            .update({ total_quantity: newTotalQuantity })
+            .eq("item_id", itemId);
+
+          if (updateStockError) {
+            console.error(
+              `[updateQuoteItem] Error updating stock for item ${itemId}:`,
+              updateStockError,
+            );
+          }
+        }
+      }
+    }
+  } else {
+    // Quote is draft - just validate availability (existing logic)
     let available = 0;
     if (item.is_serialized) {
       const { data: units } = await supabase
         .from("inventory_units")
         .select("status")
-        .eq("item_id", quoteItem.item_id);
+        .eq("item_id", itemId);
 
       if (units) {
         available = units.filter((u) => u.status === "available").length;
@@ -229,7 +530,7 @@ export async function updateQuoteItem(formData: FormData) {
       const { data: stock } = await supabase
         .from("inventory_stock")
         .select("total_quantity, out_of_service_quantity")
-        .eq("item_id", quoteItem.item_id)
+        .eq("item_id", itemId)
         .single();
 
       if (stock) {
@@ -237,16 +538,17 @@ export async function updateQuoteItem(formData: FormData) {
       }
     }
 
-    if (quantity > available) {
+    if (newQuantity > available) {
       return {
         error: `Insufficient availability. Only ${available} available.`,
       };
     }
   }
 
+  // Update the quote item quantity
   const { error } = await supabase
     .from("quote_items")
-    .update({ quantity })
+    .update({ quantity: newQuantity })
     .eq("id", quoteItemId);
 
   if (error) {
@@ -260,6 +562,8 @@ export async function updateQuoteItem(formData: FormData) {
 
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${quoteItem.quote_id}`);
+  revalidatePath("/"); // Revalidate inventory page
+
   return { success: true };
 }
 
@@ -270,13 +574,133 @@ export async function deleteQuoteItem(formData: FormData) {
     return { error: "Quote item ID is required" };
   }
 
-  // Get quote_id before deleting for revalidation
-  const { data: quoteItem } = await supabase
+  // Get quote item details and quote status before deleting
+  const { data: quoteItem, error: fetchError } = await supabase
     .from("quote_items")
-    .select("quote_id")
+    .select(
+      `
+      id,
+      quote_id,
+      item_id,
+      quantity,
+      quotes:quote_id (
+        id,
+        status
+      )
+    `,
+    )
     .eq("id", quoteItemId)
     .single();
 
+  if (fetchError || !quoteItem) {
+    console.error("[deleteQuoteItem] Error fetching quote item:", {
+      action: "deleteQuoteItem",
+      quote_item_id: quoteItemId,
+      error: fetchError?.message,
+    });
+    return { error: "Quote item not found" };
+  }
+
+  const quote = quoteItem.quotes as any;
+  const quoteStatus = quote?.status;
+  const itemId = quoteItem.item_id;
+  const quantity = quoteItem.quantity;
+
+  // If quote is accepted (confirmed), restore inventory
+  if (quoteStatus === "accepted") {
+    // Check if item is serialized
+    const { data: item, error: itemError } = await supabase
+      .from("inventory_items")
+      .select("is_serialized")
+      .eq("id", itemId)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (itemError || !item) {
+      console.error(
+        `[deleteQuoteItem] Error fetching item ${itemId}:`,
+        itemError,
+      );
+      // Continue with deletion even if we can't restore inventory
+    } else {
+      if (item.is_serialized) {
+        // For serialized items, change unit statuses from "out" back to "available"
+        const { data: outUnits, error: unitsError } = await supabase
+          .from("inventory_units")
+          .select("id")
+          .eq("item_id", itemId)
+          .eq("status", "out")
+          .limit(quantity);
+
+        if (unitsError) {
+          console.error(
+            `[deleteQuoteItem] Error fetching units for item ${itemId}:`,
+            unitsError,
+          );
+        } else if (outUnits && outUnits.length >= quantity) {
+          const unitIds = outUnits.slice(0, quantity).map((u) => u.id);
+          const { error: updateUnitsError } = await supabase
+            .from("inventory_units")
+            .update({ status: "available" })
+            .in("id", unitIds);
+
+          if (updateUnitsError) {
+            console.error(
+              `[deleteQuoteItem] Error updating units for item ${itemId}:`,
+              updateUnitsError,
+            );
+          }
+        }
+      } else {
+        // For non-serialized items, increase total_quantity in inventory_stock
+        const { data: stock, error: stockError } = await supabase
+          .from("inventory_stock")
+          .select("total_quantity, out_of_service_quantity")
+          .eq("item_id", itemId)
+          .single();
+
+        if (stockError && stockError.code !== "PGRST116") {
+          console.error(
+            `[deleteQuoteItem] Error fetching stock for item ${itemId}:`,
+            stockError,
+          );
+        } else if (stock) {
+          const newTotalQuantity = stock.total_quantity + quantity;
+          const { error: updateStockError } = await supabase
+            .from("inventory_stock")
+            .update({ total_quantity: newTotalQuantity })
+            .eq("item_id", itemId);
+
+          if (updateStockError) {
+            console.error(
+              `[deleteQuoteItem] Error updating stock for item ${itemId}:`,
+              updateStockError,
+            );
+          }
+        } else {
+          // Stock doesn't exist, create it with the restored quantity
+          const { error: insertStockError } = await supabase
+            .from("inventory_stock")
+            .insert({
+              item_id: itemId,
+              location_id: "22222222-2222-2222-2222-222222222222", // Main Warehouse
+              total_quantity: quantity,
+              out_of_service_quantity: 0,
+              tenant_id: tenantId,
+            });
+
+          if (insertStockError) {
+            console.error(
+              `[deleteQuoteItem] Error creating stock for item ${itemId}:`,
+              insertStockError,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // Delete the quote item
   const { error } = await supabase
     .from("quote_items")
     .delete()
@@ -292,9 +716,9 @@ export async function deleteQuoteItem(formData: FormData) {
   }
 
   revalidatePath("/quotes");
-  if (quoteItem) {
-    revalidatePath(`/quotes/${quoteItem.quote_id}`);
-  }
+  revalidatePath(`/quotes/${quoteItem.quote_id}`);
+  revalidatePath("/"); // Revalidate inventory page to show restored availability
+
   return { success: true };
 }
 
@@ -444,4 +868,168 @@ export async function refreshQuoteItemPrices(itemId: string) {
       revalidatePath(`/quotes/${quoteId}`);
     }
   }
+}
+
+export async function confirmQuotation(formData: FormData) {
+  const quoteId = String(formData.get("quote_id"));
+
+  if (!quoteId) {
+    return { ok: false, error: "Quote ID is required." };
+  }
+
+  // Fetch the quote with items
+  const { getQuoteWithItems } = await import("@/lib/quotes");
+  const quote = await getQuoteWithItems(quoteId);
+
+  if (!quote) {
+    return { ok: false, error: "Quote not found." };
+  }
+
+  if (quote.status !== "draft") {
+    return { ok: false, error: "Only draft quotes can be confirmed." };
+  }
+
+  if (quote.items.length === 0) {
+    return { ok: false, error: "Cannot confirm a quote with no items." };
+  }
+
+  // Check availability for all items before confirming
+  const { getItemAvailabilityBreakdown } = await import("@/lib/quotes");
+  const availabilityChecks = await Promise.all(
+    quote.items.map(async (item) => {
+      const breakdown = await getItemAvailabilityBreakdown(item.item_id, {
+        quoteId: quote.id,
+        startDate: quote.start_date,
+        endDate: quote.end_date,
+      });
+      return {
+        itemId: item.item_id,
+        itemName: item.item_name || "Unknown",
+        required: item.quantity,
+        available: breakdown.effectiveAvailable ?? breakdown.available,
+        isSerialized: item.item_is_serialized ?? false,
+      };
+    }),
+  );
+
+  // Check if all items have sufficient availability
+  const insufficientItems = availabilityChecks.filter(
+    (check) => check.required > check.available,
+  );
+
+  if (insufficientItems.length > 0) {
+    const itemNames = insufficientItems.map((i) => i.itemName).join(", ");
+    return {
+      ok: false,
+      error: `Insufficient availability for: ${itemNames}`,
+    };
+  }
+
+  // Update quote status to "accepted"
+  const { error: updateQuoteError } = await supabase
+    .from("quotes")
+    .update({ status: "accepted" })
+    .eq("id", quoteId)
+    .eq("tenant_id", tenantId);
+
+  if (updateQuoteError) {
+    console.error("[confirmQuotation] Error updating quote status:", updateQuoteError);
+    return { ok: false, error: "Failed to update quote status." };
+  }
+
+  // Reduce inventory availability for each item
+  for (const item of quote.items) {
+    const check = availabilityChecks.find((c) => c.itemId === item.item_id);
+    if (!check) continue;
+
+    if (check.isSerialized) {
+      // For serialized items, update unit statuses from "available" to "out"
+      const { data: availableUnits, error: unitsError } = await supabase
+        .from("inventory_units")
+        .select("id")
+        .eq("item_id", item.item_id)
+        .eq("status", "available")
+        .limit(item.quantity);
+
+      if (unitsError) {
+        console.error(
+          `[confirmQuotation] Error fetching units for item ${item.item_id}:`,
+          unitsError,
+        );
+        continue;
+      }
+
+      if (availableUnits && availableUnits.length >= item.quantity) {
+        const unitIds = availableUnits.slice(0, item.quantity).map((u) => u.id);
+        const { error: updateUnitsError } = await supabase
+          .from("inventory_units")
+          .update({ status: "out" })
+          .in("id", unitIds);
+
+        if (updateUnitsError) {
+          console.error(
+            `[confirmQuotation] Error updating units for item ${item.item_id}:`,
+            updateUnitsError,
+          );
+        }
+      }
+    } else {
+      // For non-serialized items, reduce total_quantity in inventory_stock
+      const { data: stock, error: stockError } = await supabase
+        .from("inventory_stock")
+        .select("total_quantity, out_of_service_quantity")
+        .eq("item_id", item.item_id)
+        .single();
+
+      if (stockError && stockError.code !== "PGRST116") {
+        console.error(
+          `[confirmQuotation] Error fetching stock for item ${item.item_id}:`,
+          stockError,
+        );
+        continue;
+      }
+
+      if (stock) {
+        const newTotalQuantity = Math.max(0, stock.total_quantity - item.quantity);
+        const { error: updateStockError } = await supabase
+          .from("inventory_stock")
+          .update({ total_quantity: newTotalQuantity })
+          .eq("item_id", item.item_id);
+
+        if (updateStockError) {
+          console.error(
+            `[confirmQuotation] Error updating stock for item ${item.item_id}:`,
+            updateStockError,
+          );
+        }
+      } else {
+        // Stock doesn't exist, create it with negative quantity (shouldn't happen if availability check worked)
+        console.warn(
+          `[confirmQuotation] No stock record found for item ${item.item_id}, creating one.`,
+        );
+        const { error: insertStockError } = await supabase
+          .from("inventory_stock")
+          .insert({
+            item_id: item.item_id,
+            location_id: "22222222-2222-2222-2222-222222222222", // Main Warehouse
+            total_quantity: -item.quantity, // Negative to reflect the reduction
+            out_of_service_quantity: 0,
+            tenant_id: tenantId,
+          });
+
+        if (insertStockError) {
+          console.error(
+            `[confirmQuotation] Error creating stock for item ${item.item_id}:`,
+            insertStockError,
+          );
+        }
+      }
+    }
+  }
+
+  revalidatePath("/quotes");
+  revalidatePath(`/quotes/${quoteId}`);
+  revalidatePath("/"); // Revalidate inventory page
+
+  return { ok: true, message: "Quotation confirmed successfully!" };
 }

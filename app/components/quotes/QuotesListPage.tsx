@@ -22,6 +22,14 @@ export default function QuotesListPage({
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
+  // Consistent date formatting to avoid hydration errors
+  const formatDate = (date: Date) => {
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${year}-${month}-${day}`; // Consistent format
+  };
+
   // Sync quotes state when initialQuotes prop changes (after router.refresh())
   useEffect(() => {
     setQuotes(initialQuotes);
@@ -191,8 +199,8 @@ export default function QuotesListPage({
                           {quote.name}
                         </h3>
                         <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                          {startDate.toLocaleDateString()} -{" "}
-                          {endDate.toLocaleDateString()} ({days} days)
+                          {formatDate(startDate)} -{" "}
+                          {formatDate(endDate)} ({days} days)
                         </p>
                       </div>
                       <div className="flex items-center gap-3 sm:gap-4">

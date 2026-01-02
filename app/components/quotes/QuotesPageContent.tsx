@@ -28,6 +28,14 @@ export default function QuotesPageContent({
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
+  // Consistent date formatting to avoid hydration errors
+  const formatDate = (date: Date) => {
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${year}-${month}-${day}`; // Consistent format
+  };
+
   const handleQuoteClick = (quoteId: string) => {
     setSelectedQuoteId(quoteId);
     setIsDrawerOpen(true);
@@ -133,8 +141,8 @@ export default function QuotesPageContent({
                           {quote.name}
                         </h3>
                         <p className="text-sm text-gray-600 mt-1">
-                          {startDate.toLocaleDateString()} -{" "}
-                          {endDate.toLocaleDateString()} ({days} days)
+                          {formatDate(startDate)} -{" "}
+                          {formatDate(endDate)} ({days} days)
                         </p>
                       </div>
                       <div className="flex items-center gap-4">
