@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -13,7 +13,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import type { QuoteWithItems } from "@/lib/quotes";
+import type { QuoteWithItems, QuoteItem } from "@/lib/quotes";
 import {
   getItemAvailabilityBreakdown,
   calculateQuoteRisk,
@@ -54,6 +54,7 @@ export default function QuoteDetailPage({
   deleteQuoteItem,
 }: QuoteDetailPageProps) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [quote, setQuote] = useState<QuoteWithItems>(initialQuote);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -76,6 +77,8 @@ export default function QuoteDetailPage({
   );
   // Debounce timers for each quote item
   const debounceTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  // Track previous item IDs to prevent unnecessary availability re-fetches
+  const prevItemIdsStringRef = useRef<string>('');
 
   // Sync quote when initialQuote changes (after router.refresh())
   useEffect(() => {
@@ -88,15 +91,44 @@ export default function QuoteDetailPage({
     setLocalQuantities(newQuantities);
   }, [initialQuote]);
 
+  // Memoize item IDs string - only changes when item IDs change, not quantities
+  // Create a stable string dependency
+  const itemIdsDependency = useMemo(() => 
+    quote.items.map(item => item.item_id).sort().join(','),
+    [quote.items]
+  );
+  
+  const itemIdsString = useMemo(() => {
+    // Only update if item IDs actually changed (not just quantities)
+    if (itemIdsDependency === prevItemIdsStringRef.current) {
+      return prevItemIdsStringRef.current;
+    }
+    prevItemIdsStringRef.current = itemIdsDependency;
+    return itemIdsDependency;
+  }, [itemIdsDependency]);
+
   // Fetch availability breakdowns for all items with quote context for date-aware calculation
+  // Only fetch when item IDs actually change, not on every render
   useEffect(() => {
+    let cancelled = false;
+    
     const fetchAvailabilities = async () => {
       // Ensure loading state is set immediately
       setIsLoadingAvailabilities(true);
       const availMap = new Map<string, ItemAvailabilityBreakdown>();
       
-      // Fetch availability for all items
-      const promises = quote.items.map(async (item) => {
+      // Get items from current quote state
+      const currentItems = quote.items;
+      if (currentItems.length === 0) {
+        setItemAvailabilities(new Map());
+        setIsLoadingAvailabilities(false);
+        return;
+      }
+      
+      // Fetch availability for all items in parallel
+      const promises = currentItems.map(async (item) => {
+        if (cancelled) return { itemId: item.item_id, breakdown: null };
+        
         try {
           const breakdown = await getItemAvailabilityBreakdown(item.item_id, {
             quoteId: quote.id,
@@ -115,6 +147,9 @@ export default function QuoteDetailPage({
       
       // Wait for all availability data to load
       const results = await Promise.all(promises);
+      
+      if (cancelled) return;
+      
       results.forEach(({ itemId, breakdown }) => {
         if (breakdown) {
           availMap.set(itemId, breakdown);
@@ -126,13 +161,12 @@ export default function QuoteDetailPage({
       setIsLoadingAvailabilities(false);
     };
 
-    if (quote.items.length > 0) {
-      fetchAvailabilities();
-    } else {
-      setItemAvailabilities(new Map());
-      setIsLoadingAvailabilities(false);
-    }
-  }, [quote.items, quote.id, quote.start_date, quote.end_date]);
+    fetchAvailabilities();
+    
+    return () => {
+      cancelled = true;
+    };
+  }, [itemIdsString, quote.id, quote.start_date, quote.end_date]);
 
   // Calculate event-level risk indicator (using local quantities for real-time updates)
   // Only calculate when availability data is loaded to prevent incorrect risk level display
@@ -159,7 +193,7 @@ export default function QuoteDetailPage({
     );
   }, [quote.items, itemAvailabilities, localQuantities, isLoadingAvailabilities]);
 
-  const handleAddItem = async (
+  const handleAddItem = useCallback(async (
     itemId: string,
     itemName: string,
     unitPrice: number,
@@ -199,6 +233,30 @@ export default function QuoteDetailPage({
       return;
     }
     
+    // Optimistically add item to quote state immediately
+    // This makes the UI update instantly without waiting for server
+    const optimisticItem: QuoteItem = {
+      id: `temp-${Date.now()}`, // Temporary ID
+      quote_id: quote.id,
+      item_id: itemId,
+      item_name: itemName,
+      quantity,
+      unit_price_snapshot: unitPrice,
+      item_is_serialized: false, // Will be updated on refresh
+    };
+    
+    // Batch state updates using React's automatic batching
+    // Update both quote and localQuantities together
+    setQuote((prevQuote) => ({
+      ...prevQuote,
+      items: [...prevQuote.items, optimisticItem],
+    }));
+    setLocalQuantities((prev) => {
+      const newMap = new Map(prev);
+      newMap.set(optimisticItem.id, quantity.toString());
+      return newMap;
+    });
+    
     // Item doesn't exist: create new quote_item
     const formData = new FormData();
     formData.append("quote_id", quote.id);
@@ -206,34 +264,103 @@ export default function QuoteDetailPage({
     formData.append("quantity", quantity.toString());
     formData.append("unit_price", unitPrice.toString());
 
-    const result = await addQuoteItem(formData);
-    if (result.success) {
-      router.refresh();
-    } else if (result.error) {
-      alert(result.error);
+    try {
+      const result = await addQuoteItem(formData);
+      if (result.success) {
+        // Refresh in background after delay to sync with server
+        // Use a longer delay to batch multiple adds
+        setTimeout(() => {
+          router.refresh();
+        }, 1500);
+      } else if (result.error) {
+        // Revert optimistic update on error
+        setQuote((prevQuote) => ({
+          ...prevQuote,
+          items: prevQuote.items.filter((item) => item.id !== optimisticItem.id),
+        }));
+        setLocalQuantities((prev) => {
+          const newMap = new Map(prev);
+          newMap.delete(optimisticItem.id);
+          return newMap;
+        });
+        alert(result.error);
+      }
+    } catch (error) {
+      // Revert on error
+      setQuote((prevQuote) => ({
+        ...prevQuote,
+        items: prevQuote.items.filter((item) => item.id !== optimisticItem.id),
+      }));
+      setLocalQuantities((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(optimisticItem.id);
+        return newMap;
+      });
+      alert("Failed to add item. Please try again.");
     }
-  };
+  }, [quote.items, quote.id, router]);
 
-  // Debounced save function
-  const saveQuantity = async (quoteItemId: string, quantity: number) => {
+  // Debounced save function with instant UI updates
+  const saveQuantity = useCallback(async (quoteItemId: string, quantity: number) => {
     // Validate: integers >= 0 only
     if (!Number.isInteger(quantity) || quantity < 0) {
       return;
     }
+
+    // Update quote state optimistically for instant UI feedback
+    // This makes subtotals, totals, and all calculations update immediately
+    setQuote((prevQuote) => {
+      const updatedItems = prevQuote.items.map((item) =>
+        item.id === quoteItemId
+          ? { ...item, quantity }
+          : item
+      );
+      return { ...prevQuote, items: updatedItems };
+    });
 
     const formData = new FormData();
     formData.append("quote_item_id", quoteItemId);
     formData.append("quantity", quantity.toString());
     formData.append("quote_id", quote.id);
 
-    const result = await updateQuoteItem(formData);
-    if (result.success) {
-      router.refresh();
-    } else if (result.error) {
-      alert(result.error);
-      // Revert local quantity on error by syncing with server
+    try {
+      const result = await updateQuoteItem(formData);
+      if (result.success) {
+        // Silently refresh in background without blocking UI
+        // Use a longer delay to batch multiple updates
+        const refreshTimer = setTimeout(() => {
+          router.refresh();
+        }, 2000);
+        // Store timer to cancel if another update happens
+        debounceTimersRef.current.set(`refresh-${quoteItemId}`, refreshTimer);
+      } else if (result.error) {
+        // Revert optimistic update on error
+        const item = quote.items.find((i) => i.id === quoteItemId);
+        if (item) {
+          setQuote((prevQuote) => {
+            const updatedItems = prevQuote.items.map((i) =>
+              i.id === quoteItemId ? item : i
+            );
+            return { ...prevQuote, items: updatedItems };
+          });
+          setLocalQuantities((prev) => {
+            const newMap = new Map(prev);
+            newMap.set(quoteItemId, item.quantity.toString());
+            return newMap;
+          });
+        }
+        alert(result.error);
+      }
+    } catch (error) {
+      // Revert on error
       const item = quote.items.find((i) => i.id === quoteItemId);
       if (item) {
+        setQuote((prevQuote) => {
+          const updatedItems = prevQuote.items.map((i) =>
+            i.id === quoteItemId ? item : i
+          );
+          return { ...prevQuote, items: updatedItems };
+        });
         setLocalQuantities((prev) => {
           const newMap = new Map(prev);
           newMap.set(quoteItemId, item.quantity.toString());
@@ -241,11 +368,11 @@ export default function QuoteDetailPage({
         });
       }
     }
-  };
+  }, [quote.items, quote.id, router]);
 
   // Update local quantity and schedule debounced save
-  const updateQuantity = (quoteItemId: string, newQuantity: number) => {
-    // Update local state immediately
+  const updateQuantity = useCallback((quoteItemId: string, newQuantity: number) => {
+    // Update local state immediately for instant UI feedback
     setLocalQuantities((prev) => {
       const newMap = new Map(prev);
       newMap.set(quoteItemId, newQuantity.toString());
@@ -258,14 +385,14 @@ export default function QuoteDetailPage({
       clearTimeout(existingTimer);
     }
 
-    // Schedule new save (300-500ms debounce, using 400ms)
+    // Schedule new save with longer debounce to reduce server calls (600ms)
     const timer = setTimeout(() => {
       saveQuantity(quoteItemId, newQuantity);
       debounceTimersRef.current.delete(quoteItemId);
-    }, 400);
+    }, 600);
 
     debounceTimersRef.current.set(quoteItemId, timer);
-  };
+  }, [saveQuantity]);
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -275,15 +402,27 @@ export default function QuoteDetailPage({
     };
   }, []);
 
-  const handleDeleteItem = async (quoteItemId: string) => {
+  const handleDeleteItem = useCallback(async (quoteItemId: string) => {
+    // Optimistically remove from UI
+    setQuote((prevQuote) => ({
+      ...prevQuote,
+      items: prevQuote.items.filter((item) => item.id !== quoteItemId),
+    }));
+
     const formData = new FormData();
     formData.append("quote_item_id", quoteItemId);
 
     const result = await deleteQuoteItem(formData);
     if (result.success) {
+      // Refresh after delay to batch updates
+      setTimeout(() => {
+        router.refresh();
+      }, 500);
+    } else {
+      // Revert on error
       router.refresh();
     }
-  };
+  }, [router]);
 
   const handleDeleteQuote = async () => {
     if (
@@ -320,15 +459,15 @@ export default function QuoteDetailPage({
     setIsConfirming(false);
   };
 
-  const handleDragStart = (event: DragStartEvent) => {
+  const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;
     const itemData = active.data.current;
     if (itemData?.type === "inventory-item" && itemData?.item) {
       setActiveDraggedItem(itemData.item);
     }
-  };
+  }, []);
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     
     // Clear active dragged item immediately to remove overlay
@@ -391,9 +530,9 @@ export default function QuoteDetailPage({
         });
       }
     }
-  };
+  }, [quote.items]);
 
-  const handleQuantityModalConfirm = async () => {
+  const handleQuantityModalConfirm = useCallback(async () => {
     if (!quantityModalItem) return;
 
     const qty = parseInt(quantityModalQuantity, 10);
@@ -408,19 +547,25 @@ export default function QuoteDetailPage({
       return;
     }
 
-    await handleAddItem(
-      quantityModalItem.id,
-      quantityModalItem.name,
-      price,
-      qty,
-    );
-
-    // Reset and close modal
+    // Close modal immediately for better UX
     setShowQuantityModal(false);
+    const itemToAdd = quantityModalItem;
+    const priceToAdd = price;
+    const qtyToAdd = qty;
+    
+    // Reset modal state
     setQuantityModalItem(null);
     setQuantityModalQuantity("1");
     setQuantityModalPrice("");
-  };
+
+    // Add item (this will handle optimistic updates)
+    await handleAddItem(
+      itemToAdd.id,
+      itemToAdd.name,
+      priceToAdd,
+      qtyToAdd,
+    );
+  }, [quantityModalItem, quantityModalQuantity, quantityModalPrice, handleAddItem]);
 
   const numberOfDays = Math.ceil(
     (new Date(quote.end_date).getTime() -
@@ -543,7 +688,7 @@ export default function QuoteDetailPage({
 
         {/* Items Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6 mb-6">
-          <div className="mb-4">
+          <div className="mb-2">
             <h2 className="text-lg font-semibold text-gray-900">Items</h2>
           </div>
 
@@ -615,7 +760,7 @@ export default function QuoteDetailPage({
                   </div>
                 </div>
               ) : (
-              <div className="mt-4 space-y-3">
+              <div className="mt-1 space-y-1">
               {quote.items.map((item) => {
                 // Only get breakdown if data is loaded, otherwise use safe defaults
                 const breakdown = isLoadingAvailabilities
@@ -651,13 +796,13 @@ export default function QuoteDetailPage({
                   <div
                     id={`quote-item-${item.id}`}
                     key={item.id}
-                    className={`p-4 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
+                    className={`p-2.5 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
                       isHighlighted ? "ring-2 ring-blue-500 ring-offset-2" : ""
                     }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
                       <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
                           <h3 className="font-medium text-gray-900 truncate">
                             {item.item_name || "Unknown Item"}
                           </h3>
@@ -674,7 +819,7 @@ export default function QuoteDetailPage({
                             </span>
                           )}
                         </div>
-                        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-2">
+                        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-1">
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => {
@@ -770,7 +915,7 @@ export default function QuoteDetailPage({
                         </div>
                         {/* Availability breakdown - only show when data is loaded */}
                         {!isLoadingAvailabilities && breakdown && (
-                        <div className="mt-2 flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-gray-500">
+                        <div className="mt-1 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-gray-500">
                           <span className="whitespace-nowrap">
                             <span className="font-medium text-gray-700">
                               {breakdown.effectiveAvailable !== undefined
@@ -826,7 +971,7 @@ export default function QuoteDetailPage({
                         </div>
                         )}
                       </div>
-                      <div className="flex items-center justify-between sm:justify-end gap-4 sm:flex-col sm:items-end">
+                      <div className="flex items-center justify-between sm:justify-end gap-2 sm:flex-col sm:items-end">
                         <div className="text-right sm:text-right">
                           <div className="text-sm font-semibold text-gray-900">
                             ${lineTotal.toFixed(2)}

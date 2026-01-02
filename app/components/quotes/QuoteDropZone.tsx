@@ -21,7 +21,7 @@ export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDrop
           ? "border-blue-500 bg-blue-50 scale-[1.02]"
           : isEmpty
             ? "border-gray-300 bg-gray-50 min-h-[200px]"
-            : "border-transparent min-h-[100px]"
+            : "border-transparent min-h-[20px]"
       }`}
     >
       {isEmpty && (
