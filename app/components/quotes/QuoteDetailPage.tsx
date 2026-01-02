@@ -71,10 +71,11 @@ export default function QuoteDetailPage({
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
 
   // Configure sensors with activation distance to prevent accidental drags and improve stability
+  // Use a smaller distance for better responsiveness
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5, // Require 5px movement before drag starts (prevents accidental drags)
+        distance: 3, // Require 3px movement before drag starts (more responsive)
       },
     })
   );
@@ -486,7 +487,18 @@ export default function QuoteDetailPage({
     setActiveDraggedItem(null);
 
     // Early return if no valid drop target or item
-    if (!over || !draggedItem || over.id !== "quote-drop-zone") {
+    if (!over) {
+      return;
+    }
+
+    // Check if dropped on the quote drop zone
+    if (over.id !== "quote-drop-zone") {
+      return;
+    }
+
+    // Validate dragged item
+    if (!draggedItem) {
+      console.warn("[DragEnd] No dragged item data");
       return;
     }
 
@@ -524,11 +536,14 @@ export default function QuoteDetailPage({
     
     // Item doesn't exist - open modal immediately (batched state updates)
     // React 18+ automatically batches these updates
-    setQuantityModalItem(draggedItem);
-    setQuantityModalPrice(draggedItem.price.toFixed(2));
-    setQuantityModalQuantity("1");
-    setShowQuantityModal(true);
-    setShowAddItemModal(false);
+    // Use setTimeout to ensure state updates happen after drag cleanup
+    setTimeout(() => {
+      setQuantityModalItem(draggedItem);
+      setQuantityModalPrice(draggedItem.price.toFixed(2));
+      setQuantityModalQuantity("1");
+      setShowQuantityModal(true);
+      setShowAddItemModal(false);
+    }, 0);
   }, [quote.items, quote.status]);
 
   const handleQuantityModalConfirm = useCallback(async () => {
@@ -748,7 +763,7 @@ export default function QuoteDetailPage({
               </table>
             </div>
           ) : (
-            <div>
+            <div className="relative">
               <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly} />
               {/* Only render items when availability data is loaded to prevent flash of incorrect data */}
               {isLoadingAvailabilities ? (
@@ -1268,7 +1283,11 @@ export default function QuoteDetailPage({
       )}
       
       {/* Drag Overlay - shows dragged item above all other elements */}
-      <DragOverlay zIndex={9999} dropAnimation={null}>
+      <DragOverlay 
+        zIndex={9999} 
+        dropAnimation={null}
+        style={{ cursor: 'grabbing' }}
+      >
         {activeDraggedItem ? (
           <div className="p-4 bg-white rounded-lg shadow-2xl border-2 border-blue-500 w-80 pointer-events-none">
             <div className="flex items-center justify-between gap-4">

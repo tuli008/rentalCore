@@ -65,6 +65,12 @@ export default function DraggableItemCard({
       className={`p-4 hover:bg-gray-50 transition-colors border-b border-gray-200 last:border-b-0 ${
         isReadOnly ? "cursor-default" : "cursor-grab active:cursor-grabbing"
       }`}
+      // Prevent text selection during drag
+      onMouseDown={(e) => {
+        if (!isReadOnly && e.button === 0) {
+          e.preventDefault();
+        }
+      }}
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
@@ -124,6 +130,10 @@ export default function DraggableItemCard({
             if (!isReadOnly) {
               onAddClick(item);
             }
+          }}
+          onMouseDown={(e) => {
+            // Prevent drag from starting when clicking the button
+            e.stopPropagation();
           }}
           disabled={isReadOnly}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"

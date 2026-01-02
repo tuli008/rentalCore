@@ -21,7 +21,7 @@ export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDrop
         ? "border-blue-500 bg-blue-50 scale-[1.02]"
         : isEmpty
           ? "border-gray-300 bg-gray-50 min-h-[200px]"
-          : "border-transparent min-h-[40px]"
+          : "border-gray-200 bg-gray-50/30 min-h-[60px]"
     }`,
     [isOver, isEmpty]
   );
@@ -30,6 +30,8 @@ export default function QuoteDropZone({ isEmpty, isReadOnly = false }: QuoteDrop
     <div
       ref={setNodeRef}
       className={dropZoneClasses}
+      // Ensure drop zone is always interactive
+      style={{ pointerEvents: isReadOnly ? 'none' : 'auto' }}
     >
       {isEmpty && (
         <div className="flex flex-col items-center justify-center h-full py-12 px-4">
