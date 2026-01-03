@@ -27,6 +27,7 @@ import { supabase } from "@/lib/supabase";
 import SortableItemRow from "./SortableItemRow";
 import ItemDetailDrawer from "./item-drawer/ItemDetailDrawer";
 import DeleteModals from "./item-drawer/DeleteModals";
+import ItemCalendar from "./ItemCalendar";
 
 interface Unit {
   id: string;
@@ -1013,7 +1014,7 @@ export default function InventoryGroupCard({
         >
           <div className="w-full" style={{ overflowX: 'auto', minWidth: 0 }}>
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse min-w-[800px]">
+              <table className="w-full border-collapse min-w-[900px]">
               <thead>
                 <tr className="border-b-2 border-gray-300">
                   <th className="w-4 py-2 px-3 sm:px-4"></th>
@@ -1031,6 +1032,9 @@ export default function InventoryGroupCard({
                   </th>
                   <th className="text-right py-2 px-3 sm:px-4 font-semibold text-gray-700 text-sm">
                     Available / Total
+                  </th>
+                  <th className="text-center py-2 px-3 sm:px-4 font-semibold text-gray-700 text-sm w-16">
+                    Calendar
                   </th>
                   <th className="w-10 py-2 px-3 sm:px-4"></th>
                 </tr>
@@ -1118,7 +1122,7 @@ export default function InventoryGroupCard({
       ) : (
         <div className="w-full" style={{ overflowX: 'auto', minWidth: 0 }}>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse min-w-[800px]">
+            <table className="w-full border-collapse min-w-[900px]">
             <thead>
               <tr className="border-b-2 border-gray-300">
                 <th className="w-4 py-3 px-3 sm:px-4"></th>
@@ -1136,6 +1140,9 @@ export default function InventoryGroupCard({
                 </th>
                 <th className="text-right py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm sm:text-base">
                   Available / Total
+                </th>
+                <th className="text-center py-3 px-3 sm:px-4 font-semibold text-gray-700 text-sm sm:text-base w-16">
+                  Calendar
                 </th>
                 <th className="w-10 py-3 px-3 sm:px-4"></th>
               </tr>
@@ -1185,6 +1192,9 @@ export default function InventoryGroupCard({
                   </td>
                   <td className="py-3 px-3 sm:px-4 text-right text-gray-700 font-mono text-sm sm:text-base whitespace-nowrap">
                     {item.available} / {item.total}
+                  </td>
+                  <td className="py-2 px-3 sm:px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    <ItemCalendar itemId={item.id} itemName={item.name} />
                   </td>
                   <td className="py-2 px-3 sm:px-4 w-10"></td>
                 </tr>
