@@ -487,6 +487,31 @@ export async function createEvent(formData: FormData): Promise<{
   const eventStatus = statusParam || (quoteId ? "confirmed" : "draft");
 
   try {
+    let finalQuoteId = quoteId;
+
+    // If no quote_id is provided, automatically create a draft quote
+    if (!quoteId) {
+      const { data: quoteData, error: quoteError } = await supabase
+        .from("quotes")
+        .insert({
+          name,
+          start_date: startDate,
+          end_date: endDate,
+          status: "draft",
+          tenant_id: tenantId,
+        })
+        .select("id")
+        .single();
+
+      if (quoteError) {
+        console.error("[createEvent] Error creating draft quote:", quoteError);
+        return { error: "Failed to create draft quote for event" };
+      }
+
+      finalQuoteId = quoteData.id;
+      console.log(`[createEvent] Created draft quote ${finalQuoteId} for event`);
+    }
+
     const { data, error: insertError } = await supabase
       .from("events")
       .insert({
@@ -495,7 +520,7 @@ export async function createEvent(formData: FormData): Promise<{
         start_date: startDate,
         end_date: endDate,
         location,
-        quote_id: quoteId,
+        quote_id: finalQuoteId,
         status: eventStatus,
         tenant_id: tenantId,
       })
@@ -504,20 +529,23 @@ export async function createEvent(formData: FormData): Promise<{
 
     if (insertError) {
       console.error("[createEvent] Error:", insertError);
+      // If we created a quote but event creation failed, we could delete the quote here
+      // For now, we'll leave it as orphaned (user can clean up manually if needed)
       return { error: "Failed to create event" };
     }
 
     const eventId = data.id;
 
     // If event is created from a quote, copy all quote items to event_inventory
-    if (quoteId) {
-      const copied = await copyQuoteItemsToEvent(eventId, quoteId);
+    if (finalQuoteId) {
+      const copied = await copyQuoteItemsToEvent(eventId, finalQuoteId);
       if (!copied) {
         console.error("[createEvent] Failed to copy quote items, but event was created");
       }
     }
 
     revalidatePath("/events");
+    revalidatePath("/quotes"); // Revalidate quotes page to show the new draft quote
     return { success: true, eventId };
   } catch (error) {
     console.error("[createEvent] Unexpected error:", error);

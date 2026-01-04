@@ -1,19 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Event } from "@/app/actions/events";
 
 interface EventsListPageProps {
   initialEvents: Event[];
+  createEvent: (formData: FormData) => Promise<{
+    success?: boolean;
+    error?: string;
+    eventId?: string;
+  }>;
 }
 
 export default function EventsListPage({
   initialEvents,
+  createEvent,
 }: EventsListPageProps) {
   const router = useRouter();
-  const [events] = useState<Event[]>(initialEvents);
+  const [isPending, startTransition] = useTransition();
+  const [events, setEvents] = useState<Event[]>(initialEvents);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    description: "",
+    start_date: "",
+    end_date: "",
+    location: "",
+  });
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -40,15 +57,213 @@ export default function EventsListPage({
     }
   };
 
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+    setError(null);
+    setSuccess(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    const formDataObj = new FormData();
+    formDataObj.append("name", formData.name);
+    formDataObj.append("description", formData.description);
+    formDataObj.append("start_date", formData.start_date);
+    formDataObj.append("end_date", formData.end_date);
+    formDataObj.append("location", formData.location);
+
+    const result = await createEvent(formDataObj);
+    if (result.error) {
+      setError(result.error);
+    } else {
+      setSuccess("Event created successfully! A draft quote has been automatically created.");
+      setShowAddForm(false);
+      setFormData({
+        name: "",
+        description: "",
+        start_date: "",
+        end_date: "",
+        location: "",
+      });
+      startTransition(() => {
+        router.refresh();
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    setShowAddForm(false);
+    setFormData({
+      name: "",
+      description: "",
+      start_date: "",
+      end_date: "",
+      location: "",
+    });
+    setError(null);
+    setSuccess(null);
+  };
+
   return (
       <div className="min-h-screen bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="mb-6">
-            <h1 className="text-3xl font-bold !text-gray-900">Events</h1>
-            <p className="mt-2 text-sm text-gray-600">
-              Events are automatically created when quotes are approved. Manage your events and track their progress.
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 className="text-3xl font-bold !text-gray-900">Events</h1>
+                <p className="mt-2 text-sm text-gray-600">
+                  Create events and manage your schedule. A draft quote will be automatically created for each event.
+                </p>
+              </div>
+              {!showAddForm && (
+                <button
+                  onClick={() => setShowAddForm(true)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium whitespace-nowrap"
+                >
+                  New Event
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Add Event Form */}
+          {showAddForm && (
+            <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Create New Event
+              </h2>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label
+                      htmlFor="name"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      Event Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="name"
+                      name="name"
+                      value={formData.name}
+                      onChange={handleInputChange}
+                      required
+                      className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="start_date"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      Start Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      id="start_date"
+                      name="start_date"
+                      value={formData.start_date}
+                      onChange={handleInputChange}
+                      required
+                      className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="end_date"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      End Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      id="end_date"
+                      name="end_date"
+                      value={formData.end_date}
+                      onChange={handleInputChange}
+                      required
+                      min={formData.start_date}
+                      className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label
+                      htmlFor="location"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      Location
+                    </label>
+                    <input
+                      type="text"
+                      id="location"
+                      name="location"
+                      value={formData.location}
+                      onChange={handleInputChange}
+                      className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label
+                      htmlFor="description"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      Description
+                    </label>
+                    <textarea
+                      id="description"
+                      name="description"
+                      value={formData.description}
+                      onChange={handleInputChange}
+                      rows={3}
+                      className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {(error || success) && (
+                  <div
+                    className={`p-3 rounded-md ${
+                      error
+                        ? "bg-red-50 text-red-800 border border-red-200"
+                        : "bg-green-50 text-green-800 border border-green-200"
+                    }`}
+                  >
+                    {error || success}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={isPending}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isPending ? "Creating..." : "Create Event"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
           {events.length === 0 ? (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
@@ -67,15 +282,15 @@ export default function EventsListPage({
               </svg>
               <h3 className="mt-2 text-sm font-medium text-gray-900">No events</h3>
               <p className="mt-1 text-sm text-gray-500">
-                Events are created automatically when quotes are accepted.
+                Get started by creating your first event. A draft quote will be automatically created.
               </p>
               <div className="mt-6">
-                <Link
-                  href="/quotes"
+                <button
+                  onClick={() => setShowAddForm(true)}
                   className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
                 >
-                  Go to Quotes
-                </Link>
+                  Create Event
+                </button>
               </div>
             </div>
         ) : (
