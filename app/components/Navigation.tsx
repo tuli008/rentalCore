@@ -33,6 +33,16 @@ export default function Navigation() {
             >
               Quotes
             </Link>
+            <Link
+              href="/crew"
+              className={`inline-flex items-center px-1 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                isActive("/crew")
+                  ? "border-white text-white"
+                  : "border-transparent text-blue-100 hover:text-white hover:border-blue-300"
+              }`}
+            >
+              Crew
+            </Link>
           </div>
         </div>
       </div>

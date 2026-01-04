@@ -5,6 +5,7 @@ import DrawerHeader from "./DrawerHeader";
 import StockEditor from "./StockEditor";
 import UnitsTable from "./UnitsTable";
 import MaintenanceLogSection from "./MaintenanceLog";
+import AssetRegister from "./AssetRegister";
 
 interface Unit {
   id: string;
@@ -239,6 +240,12 @@ export default function ItemDetailDrawer({
                   onUnitStatusChange={onUnitStatusChange}
                 />
               )}
+
+              {/* Asset Register */}
+              <AssetRegister
+                itemId={localItem.id}
+                isSerialized={localItem.is_serialized}
+              />
             </div>
           </div>
         </div>
