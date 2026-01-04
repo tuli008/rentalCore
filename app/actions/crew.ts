@@ -11,6 +11,10 @@ export interface CrewMember {
   email: string | null;
   contact: string | null;
   role: "Own Crew" | "Freelancer";
+  on_leave: boolean;
+  leave_start_date: string | null;
+  leave_end_date: string | null;
+  leave_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -169,6 +173,68 @@ export async function updateCrewMember(formData: FormData): Promise<{
     return { success: true };
   } catch (error) {
     console.error("[updateCrewMember] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Update crew member leave status
+ */
+export async function updateCrewLeaveStatus(formData: FormData): Promise<{
+  success?: boolean;
+  error?: string;
+}> {
+  const id = String(formData.get("id") || "");
+  const onLeave = formData.get("on_leave") === "true" || formData.get("on_leave") === "on";
+  const leaveStartDate = String(formData.get("leave_start_date") || "").trim() || null;
+  const leaveEndDate = String(formData.get("leave_end_date") || "").trim() || null;
+  const leaveReason = String(formData.get("leave_reason") || "").trim() || null;
+
+  if (!id) {
+    return { error: "Crew member ID is required" };
+  }
+
+  // Validate leave dates if on leave
+  if (onLeave) {
+    if (!leaveStartDate || !leaveEndDate) {
+      return { error: "Leave start date and end date are required when marking on leave" };
+    }
+    const start = new Date(leaveStartDate);
+    const end = new Date(leaveEndDate);
+    if (end < start) {
+      return { error: "Leave end date must be after start date" };
+    }
+  }
+
+  try {
+    const updateData: any = {
+      on_leave: onLeave,
+      leave_start_date: onLeave ? leaveStartDate : null,
+      leave_end_date: onLeave ? leaveEndDate : null,
+      leave_reason: onLeave ? leaveReason : null,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: updateError } = await supabase
+      .from("crew_members")
+      .update(updateData)
+      .eq("id", id)
+      .eq("tenant_id", tenantId);
+
+    if (updateError) {
+      console.error("[updateCrewLeaveStatus] Error:", {
+        id,
+        onLeave,
+        error: updateError.message,
+      });
+      return { error: "Failed to update leave status" };
+    }
+
+    revalidatePath("/crew");
+    revalidatePath("/events");
+    return { success: true };
+  } catch (error) {
+    console.error("[updateCrewLeaveStatus] Unexpected error:", error);
     return { error: "An unexpected error occurred" };
   }
 }

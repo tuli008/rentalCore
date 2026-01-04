@@ -55,6 +55,25 @@ export interface EventTask {
   updated_at: string;
 }
 
+export interface CrewAvailability {
+  available: boolean;
+  status: "available" | "conflict" | "partial" | "unavailable";
+  conflict?: {
+    event_id: string;
+    event_name: string;
+    call_time: string;
+    end_time: string;
+  };
+  partial?: {
+    available_after?: string;
+    available_until?: string;
+    reason?: string;
+  };
+  unavailable?: {
+    reason?: string;
+  };
+}
+
 /**
  * Get all events
  */
@@ -136,6 +155,183 @@ async function copyQuoteItemsToEvent(eventId: string, quoteId: string): Promise<
   } catch (error) {
     console.error("[copyQuoteItemsToEvent] Unexpected error:", error);
     return false;
+  }
+}
+
+/**
+ * Check crew member availability for an event
+ */
+export async function checkCrewAvailability(
+  crewMemberId: string,
+  eventId: string,
+  callTime: string | null,
+  endTime: string | null,
+): Promise<CrewAvailability> {
+  try {
+    // Get the event dates
+    const { data: event } = await supabase
+      .from("events")
+      .select("start_date, end_date")
+      .eq("id", eventId)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (!event) {
+      return { available: false, status: "unavailable", unavailable: { reason: "Event not found" } };
+    }
+
+    const eventStart = new Date(event.start_date);
+    const eventEnd = new Date(event.end_date);
+    eventEnd.setHours(23, 59, 59, 999); // End of day
+
+    // Use provided call/end times or default to event dates
+    const requestedCallTime = callTime ? new Date(callTime) : eventStart;
+    const requestedEndTime = endTime ? new Date(endTime) : eventEnd;
+
+    // Check if crew member is on leave
+    const { data: crewMember } = await supabase
+      .from("crew_members")
+      .select("on_leave, leave_start_date, leave_end_date, leave_reason")
+      .eq("id", crewMemberId)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (crewMember?.on_leave && crewMember.leave_start_date && crewMember.leave_end_date) {
+      const leaveStart = new Date(crewMember.leave_start_date);
+      const leaveEnd = new Date(crewMember.leave_end_date);
+      leaveEnd.setHours(23, 59, 59, 999);
+
+      // Check if event dates overlap with leave period
+      if (eventStart <= leaveEnd && eventEnd >= leaveStart) {
+        const leaveReason = crewMember.leave_reason
+          ? `: ${crewMember.leave_reason}`
+          : "";
+        return {
+          available: false,
+          status: "unavailable",
+          unavailable: {
+            reason: `On leave from ${leaveStart.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            })} to ${leaveEnd.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            })}${leaveReason}`,
+          },
+        };
+      }
+    }
+
+    // Check for conflicts with other events
+    const { data: conflictingAssignments } = await supabase
+      .from("event_crew")
+      .select(
+        `
+        event_id,
+        call_time,
+        end_time,
+        events:event_id (
+          name,
+          start_date,
+          end_date
+        )
+      `,
+      )
+      .eq("crew_member_id", crewMemberId)
+      .eq("tenant_id", tenantId)
+      .neq("event_id", eventId);
+
+    if (conflictingAssignments && conflictingAssignments.length > 0) {
+      for (const assignment of conflictingAssignments) {
+        const otherEvent = assignment.events as any;
+        if (!otherEvent) continue;
+
+        const otherStart = new Date(otherEvent.start_date);
+        const otherEnd = new Date(otherEvent.end_date);
+        otherEnd.setHours(23, 59, 59, 999);
+
+        // Get assignment times
+        const assignmentCall = assignment.call_time
+          ? new Date(assignment.call_time)
+          : otherStart;
+        const assignmentEnd = assignment.end_time
+          ? new Date(assignment.end_time)
+          : otherEnd;
+
+        // Check for direct conflict (times overlap)
+        if (requestedCallTime < assignmentEnd && requestedEndTime > assignmentCall) {
+          return {
+            available: false,
+            status: "conflict",
+            conflict: {
+              event_id: assignment.event_id,
+              event_name: otherEvent.name,
+              call_time: assignment.call_time || otherEvent.start_date,
+              end_time: assignment.end_time || otherEvent.end_date,
+            },
+          };
+        }
+
+        // Check for partial availability scenarios
+        // Scenario 1: Crew member finishes another event before this event's call time
+        // But there's a gap, so they're available after the other event ends
+        if (assignmentEnd < requestedCallTime) {
+          // Available after assignment ends
+          const hoursAfter = Math.floor(
+            (requestedCallTime.getTime() - assignmentEnd.getTime()) / (1000 * 60 * 60),
+          );
+          if (hoursAfter < 2) {
+            // Less than 2 hours gap - might be tight but technically available
+            return {
+              available: true,
+              status: "partial",
+              partial: {
+                available_after: assignmentEnd.toISOString(),
+                reason: `Available after ${assignmentEnd.toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })} (finishing "${otherEvent.name}")`,
+              },
+            };
+          }
+        }
+
+        // Scenario 2: Crew member starts another event after this event ends
+        // But they need to leave early to make it
+        if (assignmentCall > requestedEndTime) {
+          const hoursBefore = Math.floor(
+            (assignmentCall.getTime() - requestedEndTime.getTime()) / (1000 * 60 * 60),
+          );
+          if (hoursBefore < 2) {
+            // Less than 2 hours gap - might be tight
+            return {
+              available: true,
+              status: "partial",
+              partial: {
+                available_until: assignmentCall.toISOString(),
+                reason: `Must finish by ${assignmentCall.toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                })} (starting "${otherEvent.name}")`,
+              },
+            };
+          }
+        }
+      }
+    }
+
+    // Check if crew member is on leave (for now, we'll add a simple check)
+    // In the future, this could check a crew_availability or leave_requests table
+    // For MVP, we'll return available if no conflicts found
+
+    return { available: true, status: "available" };
+  } catch (error) {
+    console.error("[checkCrewAvailability] Unexpected error:", error);
+    return {
+      available: false,
+      status: "unavailable",
+      unavailable: { reason: "Error checking availability" },
+    };
   }
 }
 
@@ -415,6 +611,182 @@ export async function deleteEvent(formData: FormData): Promise<{
     return { success: true };
   } catch (error) {
     console.error("[deleteEvent] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Add crew member to event
+ */
+export async function addEventCrew(formData: FormData): Promise<{
+  success?: boolean;
+  error?: string;
+  availability?: CrewAvailability;
+}> {
+  const eventId = String(formData.get("event_id") || "");
+  const crewMemberId = String(formData.get("crew_member_id") || "");
+  const role = String(formData.get("role") || "").trim();
+  const callTime = String(formData.get("call_time") || "").trim() || null;
+  const endTime = String(formData.get("end_time") || "").trim() || null;
+  const hourlyRate = String(formData.get("hourly_rate") || "").trim() || null;
+  const notes = String(formData.get("notes") || "").trim() || null;
+
+  if (!eventId || !crewMemberId || !role) {
+    return { error: "Event ID, crew member ID, and role are required" };
+  }
+
+  // Check availability
+  const availability = await checkCrewAvailability(
+    crewMemberId,
+    eventId,
+    callTime,
+    endTime,
+  );
+
+  if (availability.status === "conflict" || availability.status === "unavailable") {
+    return {
+      error: availability.conflict
+        ? `Conflict: Already assigned to "${availability.conflict.event_name}"`
+        : availability.unavailable?.reason || "Crew member is not available",
+      availability,
+    };
+  }
+
+  try {
+    const { error: insertError } = await supabase.from("event_crew").insert({
+      event_id: eventId,
+      crew_member_id: crewMemberId,
+      role,
+      call_time: callTime,
+      end_time: endTime,
+      hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
+      notes,
+      tenant_id: tenantId,
+    });
+
+    if (insertError) {
+      if (insertError.code === "23505") {
+        return { error: "This crew member is already assigned to this event" };
+      }
+      console.error("[addEventCrew] Error:", insertError);
+      return { error: "Failed to add crew member" };
+    }
+
+    revalidatePath(`/events/${eventId}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[addEventCrew] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Update crew member assignment
+ */
+export async function updateEventCrew(formData: FormData): Promise<{
+  success?: boolean;
+  error?: string;
+}> {
+  const id = String(formData.get("id") || "");
+  const role = String(formData.get("role") || "").trim();
+  const callTime = String(formData.get("call_time") || "").trim() || null;
+  const endTime = String(formData.get("end_time") || "").trim() || null;
+  const hourlyRate = String(formData.get("hourly_rate") || "").trim() || null;
+  const notes = String(formData.get("notes") || "").trim() || null;
+
+  if (!id || !role) {
+    return { error: "ID and role are required" };
+  }
+
+  // Get event_id and crew_member_id for availability check
+  const { data: existing } = await supabase
+    .from("event_crew")
+    .select("event_id, crew_member_id")
+    .eq("id", id)
+    .eq("tenant_id", tenantId)
+    .single();
+
+  if (!existing) {
+    return { error: "Crew assignment not found" };
+  }
+
+  // Check availability if times changed
+  if (callTime || endTime) {
+    const availability = await checkCrewAvailability(
+      existing.crew_member_id,
+      existing.event_id,
+      callTime,
+      endTime,
+    );
+
+    if (availability.status === "conflict" || availability.status === "unavailable") {
+      return {
+        error: availability.conflict
+          ? `Conflict: Already assigned to "${availability.conflict.event_name}"`
+          : availability.unavailable?.reason || "Crew member is not available for these times",
+      };
+    }
+  }
+
+  try {
+    const updateData: any = {
+      role,
+      call_time: callTime,
+      end_time: endTime,
+      hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
+      notes,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: updateError } = await supabase
+      .from("event_crew")
+      .update(updateData)
+      .eq("id", id)
+      .eq("tenant_id", tenantId);
+
+    if (updateError) {
+      console.error("[updateEventCrew] Error:", updateError);
+      return { error: "Failed to update crew assignment" };
+    }
+
+    revalidatePath(`/events/${existing.event_id}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[updateEventCrew] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Delete crew member from event
+ */
+export async function deleteEventCrew(formData: FormData): Promise<{
+  success?: boolean;
+  error?: string;
+}> {
+  const id = String(formData.get("id") || "");
+  const eventId = String(formData.get("event_id") || "");
+
+  if (!id) {
+    return { error: "Crew assignment ID is required" };
+  }
+
+  try {
+    const { error: deleteError } = await supabase
+      .from("event_crew")
+      .delete()
+      .eq("id", id)
+      .eq("tenant_id", tenantId);
+
+    if (deleteError) {
+      console.error("[deleteEventCrew] Error:", deleteError);
+      return { error: "Failed to remove crew member" };
+    }
+
+    revalidatePath(`/events/${eventId}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[deleteEventCrew] Unexpected error:", error);
     return { error: "An unexpected error occurred" };
   }
 }

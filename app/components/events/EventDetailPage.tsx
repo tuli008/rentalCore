@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type {
@@ -41,6 +41,18 @@ export default function EventDetailPage({
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabId>("summary");
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Persist active tab in sessionStorage to survive refreshes
+  useEffect(() => {
+    const savedTab = sessionStorage.getItem(`event-tab-${event.id}`);
+    if (savedTab && ["summary", "inventory", "crew", "timeline", "documents"].includes(savedTab)) {
+      setActiveTab(savedTab as TabId);
+    }
+  }, [event.id]);
+
+  useEffect(() => {
+    sessionStorage.setItem(`event-tab-${event.id}`, activeTab);
+  }, [activeTab, event.id]);
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "summary", label: "Summary" },
@@ -162,7 +174,7 @@ export default function EventDetailPage({
       </div>
 
       {/* Tab Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 ${activeTab === "crew" ? "lg:mr-96" : ""}`}>
         {activeTab === "summary" && (
           <EventSummaryTab
             event={event}

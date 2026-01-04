@@ -1,6 +1,6 @@
 import { getCrewMembers } from "@/app/actions/crew";
 import CrewMembersPage from "../components/crew/CrewMembersPage";
-import { createCrewMember, updateCrewMember, deleteCrewMember } from "../actions/crew";
+import { createCrewMember, updateCrewMember, deleteCrewMember, updateCrewLeaveStatus } from "../actions/crew";
 
 export default async function CrewPage() {
   const crewMembers = await getCrewMembers();
@@ -11,6 +11,7 @@ export default async function CrewPage() {
       createCrewMember={createCrewMember}
       updateCrewMember={updateCrewMember}
       deleteCrewMember={deleteCrewMember}
+      updateCrewLeaveStatus={updateCrewLeaveStatus}
     />
   );
 }
