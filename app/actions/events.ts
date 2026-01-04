@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { supabase } from "@/lib/supabase";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 
@@ -80,6 +80,7 @@ export interface CrewAvailability {
  */
 export async function getEvents(): Promise<Event[]> {
   try {
+    const supabase = await createServerSupabaseClient();
     const { data, error } = await supabase
       .from("events")
       .select("*")
@@ -163,6 +164,7 @@ export async function getEvents(): Promise<Event[]> {
  */
 async function copyQuoteItemsToEvent(eventId: string, quoteId: string): Promise<boolean> {
   try {
+    const supabase = await createServerSupabaseClient();
     // Check if items already exist
     const { data: existingItems } = await supabase
       .from("event_inventory")
@@ -229,6 +231,7 @@ export async function checkCrewAvailability(
   endTime: string | null,
 ): Promise<CrewAvailability> {
   try {
+    const supabase = await createServerSupabaseClient();
     // Get the event dates
     const { data: event } = await supabase
       .from("events")
@@ -406,6 +409,7 @@ export async function getEventWithDetails(eventId: string): Promise<{
   tasks: EventTask[];
 }> {
   try {
+    const supabase = await createServerSupabaseClient();
     const [eventResult, inventoryResult, crewResult, tasksResult] =
       await Promise.all([
         supabase
@@ -544,6 +548,8 @@ export async function createEvent(formData: FormData): Promise<{
     return { error: "End date must be after start date" };
   }
 
+  const supabase = await createServerSupabaseClient();
+
   // Determine event status based on quote status
   let eventStatus = statusParam;
   if (!eventStatus && quoteId) {
@@ -655,6 +661,7 @@ export async function updateEvent(formData: FormData): Promise<{
   }
 
   try {
+    const supabase = await createServerSupabaseClient();
     const updateData: any = {
       name,
       description,
@@ -702,6 +709,7 @@ export async function deleteEvent(formData: FormData): Promise<{
   }
 
   try {
+    const supabase = await createServerSupabaseClient();
     const { error: deleteError } = await supabase
       .from("events")
       .delete()
@@ -759,6 +767,27 @@ export async function addEventCrew(formData: FormData): Promise<{
   }
 
   try {
+    const supabase = await createServerSupabaseClient();
+    
+    // Get crew member and event details for notification (before insert)
+    const [crewMemberResult, eventResult] = await Promise.all([
+      supabase
+        .from("crew_members")
+        .select("name, email, contact")
+        .eq("id", crewMemberId)
+        .eq("tenant_id", tenantId)
+        .single(),
+      supabase
+        .from("events")
+        .select("name, start_date, end_date, location")
+        .eq("id", eventId)
+        .eq("tenant_id", tenantId)
+        .single(),
+    ]);
+
+    const crewMember = crewMemberResult.data;
+    const event = eventResult.data;
+
     const { error: insertError } = await supabase.from("event_crew").insert({
       event_id: eventId,
       crew_member_id: crewMemberId,
@@ -776,6 +805,28 @@ export async function addEventCrew(formData: FormData): Promise<{
       }
       console.error("[addEventCrew] Error:", insertError);
       return { error: "Failed to add crew member" };
+    }
+
+    // Send notification to crew member (non-blocking)
+    if (crewMember && event && (crewMember.email || crewMember.contact)) {
+      const { notifyCrewAssignment } = await import("./notifications");
+      notifyCrewAssignment({
+        crewMemberId,
+        crewMemberName: crewMember.name,
+        crewMemberEmail: crewMember.email,
+        crewMemberPhone: crewMember.contact,
+        eventName: event.name,
+        eventStartDate: event.start_date,
+        eventEndDate: event.end_date,
+        eventLocation: event.location || "TBD",
+        role,
+        callTime,
+        endTime,
+        hourlyRate: hourlyRate ? parseFloat(hourlyRate) : null,
+      }).catch((error) => {
+        // Log but don't fail the assignment if notification fails
+        console.error("[addEventCrew] Failed to send notification:", error);
+      });
     }
 
     revalidatePath(`/events/${eventId}`);
@@ -803,6 +854,8 @@ export async function updateEventCrew(formData: FormData): Promise<{
   if (!id || !role) {
     return { error: "ID and role are required" };
   }
+
+  const supabase = await createServerSupabaseClient();
 
   // Get event_id and crew_member_id for availability check
   const { data: existing } = await supabase
@@ -878,6 +931,7 @@ export async function deleteEventCrew(formData: FormData): Promise<{
   }
 
   try {
+    const supabase = await createServerSupabaseClient();
     const { error: deleteError } = await supabase
       .from("event_crew")
       .delete()
@@ -907,6 +961,7 @@ export async function createEventForAcceptedQuote(quoteId: string): Promise<{
   eventId?: string;
 }> {
   try {
+    const supabase = await createServerSupabaseClient();
     // Check if quote exists and is accepted
     const { getQuoteWithItems } = await import("@/lib/quotes");
     const quote = await getQuoteWithItems(quoteId);
@@ -958,6 +1013,7 @@ export async function syncEventStatusWithQuote(eventId: string): Promise<{
   error?: string;
 }> {
   try {
+    const supabase = await createServerSupabaseClient();
     // Get event with quote_id
     const { data: event, error: eventError } = await supabase
       .from("events")
@@ -1025,6 +1081,7 @@ export async function syncAllEventStatuses(): Promise<{
   error?: string;
 }> {
   try {
+    const supabase = await createServerSupabaseClient();
     // Get all events with quotes
     const { data: events, error: eventsError } = await supabase
       .from("events")
@@ -1115,6 +1172,7 @@ export async function getEventsForCalendar(
   location: string | null;
 }>> {
   try {
+    const supabase = await createServerSupabaseClient();
     // Query for events that overlap with the date range
     // An event overlaps if: start_date <= endDate AND end_date >= startDate
     const { data, error } = await supabase

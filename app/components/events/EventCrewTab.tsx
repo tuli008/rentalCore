@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Event, EventCrew } from "@/app/actions/events";
 import { addEventCrew, updateEventCrew, deleteEventCrew } from "@/app/actions/events";
+import { sendCrewNotification } from "@/app/actions/notifications";
 import CrewSidebar from "./CrewSidebar";
 
 interface EventCrewTabProps {
@@ -43,6 +44,9 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
     hourly_rate: "",
     notes: "",
   });
+  const [sendingNotificationId, setSendingNotificationId] = useState<string | null>(null);
+  const [notificationMessage, setNotificationMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isPending, startTransition] = useTransition();
 
   // Calculate role requirements from assigned crew
   useEffect(() => {
@@ -165,6 +169,34 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
       setEditingAssignment(null);
       router.refresh();
     }
+  };
+
+  const handleSendNotification = async (assignmentId: string) => {
+    setSendingNotificationId(assignmentId);
+    setNotificationMessage(null);
+
+    startTransition(async () => {
+      const result = await sendCrewNotification(assignmentId);
+      
+      if (result.success) {
+        setNotificationMessage({
+          type: "success",
+          text: "Notification sent successfully!",
+        });
+      } else {
+        setNotificationMessage({
+          type: "error",
+          text: result.error || "Failed to send notification",
+        });
+      }
+      
+      setSendingNotificationId(null);
+      
+      // Clear message after 3 seconds
+      setTimeout(() => {
+        setNotificationMessage(null);
+      }, 3000);
+    });
   };
 
   const handleAddRequirement = () => {
@@ -344,6 +376,19 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
           </button>
         </div>
 
+        {/* Notification Message */}
+        {notificationMessage && (
+          <div
+            className={`mb-4 p-3 rounded-md ${
+              notificationMessage.type === "success"
+                ? "bg-green-50 border border-green-200 text-green-800"
+                : "bg-red-50 border border-red-200 text-red-800"
+            }`}
+          >
+            <p className="text-sm">{notificationMessage.text}</p>
+          </div>
+        )}
+
         {crew.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-gray-500">No crew members assigned yet.</p>
@@ -480,7 +525,21 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
                             : "—"}
                         </td>
                         <td className="py-3 px-4">
-                          <div className="flex gap-2 justify-end">
+                          <div className="flex gap-2 justify-end items-center">
+                            <button
+                              onClick={() => handleSendNotification(member.id)}
+                              disabled={isPending && sendingNotificationId === member.id}
+                              className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title={
+                                member.crew_member_email || member.crew_member_contact
+                                  ? "Send notification via email and SMS"
+                                  : "No email or phone number available"
+                              }
+                            >
+                              {isPending && sendingNotificationId === member.id
+                                ? "Sending..."
+                                : "Notify"}
+                            </button>
                             <button
                               onClick={() => handleEdit(member)}
                               className="text-blue-600 hover:text-blue-700 text-sm"
