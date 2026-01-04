@@ -115,15 +115,17 @@ export default function EventDetailPage({
                 </h1>
                 <span
                   className={`px-3 py-1 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap ${
-                    event.status === "draft"
+                    event.status === "prepping"
                       ? "bg-gray-100 text-gray-800"
-                      : event.status === "confirmed"
+                      : event.status === "planned"
                         ? "bg-blue-100 text-blue-800"
-                        : event.status === "in_progress"
+                        : event.status === "in_transit"
                           ? "bg-yellow-100 text-yellow-800"
-                          : event.status === "completed"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-red-100 text-red-800"
+                          : event.status === "on_venue"
+                            ? "bg-orange-100 text-orange-800"
+                            : event.status === "closed"
+                              ? "bg-green-100 text-green-800"
+                              : "bg-red-100 text-red-800"
                   }`}
                 >
                   {event.status

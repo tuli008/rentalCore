@@ -52,8 +52,6 @@ export default function EventsCalendarView({
 
       try {
         const events = await getEventsForCalendar(startDateStr, endDateStr);
-        console.log(`[EventsCalendarView] Loaded ${events.length} events for ${startDateStr} to ${endDateStr}:`, events);
-        console.log(`[EventsCalendarView] Looking for Event4 in loaded events:`, events.find(e => e.title === "Event4" || e.title === "event4"));
         setCalendarEvents(events);
       } catch (error) {
         console.error("Error loading calendar events:", error);
@@ -70,33 +68,14 @@ export default function EventsCalendarView({
     if (statusFilter !== "all") {
       // Case-insensitive status comparison
       if (event.status.toLowerCase() !== statusFilter.toLowerCase()) {
-        console.log(`[EventsCalendarView] Event "${event.title}" filtered out by status filter: ${event.status} !== ${statusFilter}`);
         return false;
       }
     }
     if (searchQuery && !event.title.toLowerCase().includes(searchQuery.toLowerCase())) {
-      console.log(`[EventsCalendarView] Event "${event.title}" filtered out by search query: "${searchQuery}"`);
       return false;
     }
     return true;
   });
-  
-  console.log(`[EventsCalendarView] Filtered events: ${filteredEvents.length} from ${calendarEvents.length} total. Event4 in filtered?`, filteredEvents.some(e => e.title === "Event4" || e.title === "event4"));
-
-  // Debug: Log filtered events
-  useEffect(() => {
-    console.log(`[EventsCalendarView] Filtered ${filteredEvents.length} events (from ${calendarEvents.length} total)`);
-    if (filteredEvents.length > 0) {
-      console.log("[EventsCalendarView] Filtered events:", filteredEvents);
-    }
-  }, [filteredEvents.length, calendarEvents.length]);
-
-  // Debug: Log filtered events
-  useEffect(() => {
-    if (filteredEvents.length > 0) {
-      console.log(`[EventsCalendarView] Filtered ${filteredEvents.length} events:`, filteredEvents);
-    }
-  }, [filteredEvents.length]);
 
   // Generate calendar days
   const generateCalendarDays = () => {
@@ -130,7 +109,6 @@ export default function EventsCalendarView({
     const lastDay = new Date(year, month + 1, 0);
     const daysInMonth = lastDay.getDate();
 
-    console.log(`[getAllDisplayEvents] Processing ${filteredEvents.length} filtered events for ${year}-${month + 1}, daysInMonth=${daysInMonth}`);
 
     return filteredEvents
       .map((event) => {
@@ -147,7 +125,6 @@ export default function EventsCalendarView({
         // Check if event overlaps with current month
         // Event overlaps if: eventEnd >= monthStart AND eventStart <= monthEnd
         if (eventEnd < monthStart || eventStart > monthEnd) {
-          console.log(`[getAllDisplayEvents] Event "${event.title}" (${eventStartStr} to ${eventEndStr}) does NOT overlap with month (monthStart=${monthStart.toISOString().split('T')[0]}, monthEnd=${monthEnd.toISOString().split('T')[0]})`);
           return null;
         }
 
@@ -175,13 +152,10 @@ export default function EventsCalendarView({
         if (startDay < 1) startDay = 1;
         if (endDay > daysInMonth) endDay = daysInMonth;
         if (startDay > endDay) {
-          console.warn(`[getAllDisplayEvents] Event "${event.title}" has invalid date range: startDay=${startDay}, endDay=${endDay}, daysInMonth=${daysInMonth}`);
           return null;
         }
 
         const span = endDay - startDay + 1;
-        
-        console.log(`[getAllDisplayEvents] Event "${event.title}": startDay=${startDay}, endDay=${endDay}, span=${span}, eventStart=${eventStartStr}, eventEnd=${eventEndStr}, monthEnd=${monthEnd.toISOString().split('T')[0]}`);
 
         return {
           ...event,
@@ -216,11 +190,7 @@ export default function EventsCalendarView({
     const eventStartStr = event.startDate.split("T")[0];
     const currentStr = date.toISOString().split("T")[0];
     
-    const matches = eventStartStr === currentStr;
-    if (matches) {
-      console.log(`[doesEventStartOnDate] Event "${event.title}" starts on ${currentStr}`);
-    }
-    return matches;
+    return eventStartStr === currentStr;
   };
 
   // Calculate how many days an event should span from a given date
@@ -355,36 +325,6 @@ export default function EventsCalendarView({
         </div>
       </div>
 
-      {/* Debug Info - Remove after fixing */}
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm mb-4">
-        <div className="font-semibold text-yellow-800 mb-2">🔍 Debug Info:</div>
-        <div className="text-yellow-700 space-y-1">
-          <div><strong>Total events loaded:</strong> {calendarEvents.length}</div>
-          <div><strong>Filtered events:</strong> {filteredEvents.length}</div>
-          <div className="mt-2">
-            <strong>All Events from Database:</strong>
-            {calendarEvents.length === 0 ? (
-              <div className="text-yellow-600 italic ml-2">No events found</div>
-            ) : (
-              <ul className="list-disc list-inside ml-2 mt-1">
-                {calendarEvents.map((e) => (
-                  <li key={e.id} className="break-words">
-                    <strong>{e.title}</strong> (ID: {e.id.substring(0, 8)}...)
-                    <br />
-                    <span className="text-xs">Dates: {e.startDate} to {e.endDate}</span>
-                    <br />
-                    <span className="text-xs">Status: {e.status}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="mt-2 text-xs text-yellow-600">
-            💡 <strong>Tip:</strong> Also check browser console (F12) or terminal for detailed server logs
-          </div>
-        </div>
-      </div>
-
       {/* Calendar Grid */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         {isLoading ? (
@@ -446,7 +386,6 @@ export default function EventsCalendarView({
                 const eventBarSpacing = 2; // Spacing between stacked events
 
                 const allEvents = getAllDisplayEvents();
-                console.log(`[EventsCalendarView] getAllDisplayEvents returned ${allEvents.length} events:`, allEvents.map(e => ({ id: e.id, title: e.title, startDay: e.startDay, endDay: e.endDay })));
                 
                 // Calculate positions for all events and detect overlaps
                 const eventPositions = allEvents.map((event) => {
@@ -459,8 +398,6 @@ export default function EventsCalendarView({
                   const endRow = Math.floor((startingDayOfWeek + event.endDay - 1) / 7);
                   const startCol = startDayOfWeek;
                   const endCol = endDayOfWeek;
-
-                  console.log(`[eventPositions] Event "${event.title}": startDay=${event.startDay}, endDay=${event.endDay}, startRow=${startRow}, endRow=${endRow}, startCol=${startCol}, endCol=${endDayOfWeek}, startDayOfWeek=${startDayOfWeek}, endDayOfWeek=${endDayOfWeek}`);
 
                   return {
                     event,
@@ -516,11 +453,6 @@ export default function EventsCalendarView({
                   eventStackLevels.set(eventId, stackLevel);
                 });
                 
-                console.log(`[EventsCalendarView] Stack levels:`, Array.from(eventStackLevels.entries()).map(([id, level]) => {
-                  const event = allEvents.find(e => e.id === id);
-                  return { id: id.substring(0, 8), title: event?.title, stackLevel: level };
-                }));
-                
                 // Now assign offsets to each row based on stack level
                 eventPositions.forEach((pos) => {
                   const stackLevel = eventStackLevels.get(pos.event.id) || 0;
@@ -534,21 +466,10 @@ export default function EventsCalendarView({
                 });
 
                 // Render all event segments
-                console.log(`[EventsCalendarView] Rendering ${eventPositions.length} event positions:`, eventPositions.map(p => ({ 
-                  id: p.event.id.substring(0, 8), 
-                  title: p.event.title, 
-                  startDay: p.startDay, 
-                  endDay: p.endDay, 
-                  startRow: p.startRow, 
-                  endRow: p.endRow,
-                  stackLevel: eventStackLevels.get(p.event.id) || 0
-                })));
-                
                 return eventPositions.flatMap((pos) => {
                   const { event, startRow, endRow, startCol, endCol } = pos;
                   const eventColor = getEventColor(event.id);
                   const stackLevel = eventStackLevels.get(event.id) || 0;
-                  console.log(`[EventsCalendarView] Rendering event "${event.title}": startDay=${pos.startDay}, endDay=${pos.endDay}, startRow=${startRow}, endRow=${endRow}, stackLevel=${stackLevel}`);
                   
                   const segments: Array<{
                     leftPercent: number;
@@ -609,8 +530,6 @@ export default function EventsCalendarView({
                     const widthPercent = (numCols / 7) * 100;
                     const topOffset = startRow * cellHeight + 24;
                     
-                    console.log(`[EventsCalendarView] Single-row event "${event.title}": numCols=${numCols}, leftPercent=${leftPercent}, widthPercent=${widthPercent}, topOffset=${topOffset}, verticalOffset=${offset}`);
-                    
                     segments.push({
                       leftPercent,
                       widthPercent,
@@ -625,9 +544,6 @@ export default function EventsCalendarView({
                     const finalTop = segment.topOffset + segment.verticalOffset;
                     const finalLeft = segment.leftPercent;
                     const finalWidth = segment.widthPercent;
-                    const isEvent4 = event.title === "Event4" || event.title === "event4";
-                    
-                    console.log(`[EventsCalendarView] Creating segment for "${event.title}": left=${finalLeft}%, width=${finalWidth}%, top=${finalTop}px, height=${segment.height}px, zIndex=${10 + segment.verticalOffset}, isEvent4=${isEvent4}`);
                     
                     return (
                       <Link
@@ -642,7 +558,6 @@ export default function EventsCalendarView({
                           margin: "2px",
                           padding: "4px 6px",
                           zIndex: 10 + segment.verticalOffset, // Higher z-index for stacked events
-                          backgroundColor: isEvent4 ? "red" : undefined, // Temporary debug color for Event4
                         }}
                         title={`${event.title}\n${new Date(event.startDate).toLocaleDateString()} - ${new Date(event.endDate).toLocaleDateString()}\n${event.location || "No location"}\n\nClick to view event →`}
                       >
@@ -655,7 +570,6 @@ export default function EventsCalendarView({
                     );
                   });
                   
-                  console.log(`[EventsCalendarView] Created ${renderedSegments.length} segments for "${event.title}"`);
                   return renderedSegments;
                 });
               })()}

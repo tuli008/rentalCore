@@ -174,10 +174,11 @@ export default function EventSummaryTab({
                 }
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="draft">Draft</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
+                <option value="prepping">Prepping</option>
+                <option value="planned">Planned</option>
+                <option value="in_transit">In Transit</option>
+                <option value="on_venue">On Venue</option>
+                <option value="closed">Closed</option>
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>

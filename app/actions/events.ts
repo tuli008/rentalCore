@@ -1115,22 +1115,6 @@ export async function getEventsForCalendar(
   location: string | null;
 }>> {
   try {
-    console.log(`[getEventsForCalendar] Fetching events for date range: ${startDate} to ${endDate}`);
-    console.log(`[getEventsForCalendar] Tenant ID: ${tenantId}`);
-    
-    // First, let's get ALL events for this tenant to debug
-    const { data: allEvents, error: allError } = await supabase
-      .from("events")
-      .select("id, name, start_date, end_date, status, location, quote_id")
-      .eq("tenant_id", tenantId)
-      .order("start_date", { ascending: true });
-    
-    if (allError) {
-      console.error("[getEventsForCalendar] Error fetching all events:", allError);
-    } else {
-      console.log(`[getEventsForCalendar] ALL events in database (${allEvents?.length || 0}):`, allEvents?.map(e => ({ id: e.id, name: e.name, start_date: e.start_date, end_date: e.end_date })));
-    }
-    
     // Query for events that overlap with the date range
     // An event overlaps if: start_date <= endDate AND end_date >= startDate
     const { data, error } = await supabase
@@ -1140,8 +1124,6 @@ export async function getEventsForCalendar(
       .lte("start_date", endDate) // Event starts on or before endDate
       .gte("end_date", startDate) // Event ends on or after startDate
       .order("start_date", { ascending: true });
-    
-    console.log(`[getEventsForCalendar] Query filters: start_date <= ${endDate}, end_date >= ${startDate}`);
 
     if (error) {
       console.error("[getEventsForCalendar] Error:", error);
@@ -1149,20 +1131,6 @@ export async function getEventsForCalendar(
     }
 
     const events = data || [];
-    console.log(`[getEventsForCalendar] Found ${events.length} events matching date range:`, events.map(e => ({ id: e.id, name: e.name, start_date: e.start_date, end_date: e.end_date, status: e.status })));
-    
-    // Check if Event4 should match
-    const event4 = allEvents?.find(e => e.name === "Event4" || e.name === "event4");
-    if (event4) {
-      console.log(`[getEventsForCalendar] Event4 found in all events:`, event4);
-      const shouldMatch = event4.start_date <= endDate && event4.end_date >= startDate;
-      console.log(`[getEventsForCalendar] Event4 should match? start_date (${event4.start_date}) <= endDate (${endDate}) = ${event4.start_date <= endDate}, end_date (${event4.end_date}) >= startDate (${startDate}) = ${event4.end_date >= startDate}, overall: ${shouldMatch}`);
-      if (!shouldMatch) {
-        console.warn(`[getEventsForCalendar] Event4 should match but didn't! Check date comparison logic.`);
-      }
-    } else {
-      console.warn(`[getEventsForCalendar] Event4 not found in all events!`);
-    }
 
     // Sync event statuses with quote statuses (same logic as getEvents)
     const eventsWithQuotes = events.filter((e) => e.quote_id);
@@ -1230,7 +1198,6 @@ export async function getEventsForCalendar(
       location: event.location,
     }));
 
-    console.log(`[getEventsForCalendar] Returning ${result.length} events:`, result.map(e => ({ id: e.id, title: e.title, startDate: e.startDate, endDate: e.endDate })));
     return result;
   } catch (error) {
     console.error("[getEventsForCalendar] Unexpected error:", error);
