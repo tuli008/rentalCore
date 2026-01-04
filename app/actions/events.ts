@@ -12,7 +12,7 @@ export interface Event {
   start_date: string;
   end_date: string;
   location: string | null;
-  status: "draft" | "confirmed" | "in_progress" | "completed" | "cancelled";
+  status: "prepping" | "planned" | "in_transit" | "on_venue" | "closed";
   quote_id: string | null;
   created_at: string;
   updated_at: string;
@@ -76,6 +76,7 @@ export interface CrewAvailability {
 
 /**
  * Get all events
+ * Automatically syncs event statuses with their quote statuses
  */
 export async function getEvents(): Promise<Event[]> {
   try {
@@ -90,7 +91,67 @@ export async function getEvents(): Promise<Event[]> {
       return [];
     }
 
-    return data || [];
+    const events = data || [];
+
+    // Sync event statuses with quote statuses
+    // Get all events with quotes
+    const eventsWithQuotes = events.filter((e) => e.quote_id);
+    if (eventsWithQuotes.length > 0) {
+      const quoteIds = eventsWithQuotes.map((e) => e.quote_id).filter((id): id is string => id !== null);
+      
+      // Get quote statuses
+      const { data: quotes } = await supabase
+        .from("quotes")
+        .select("id, status")
+        .eq("tenant_id", tenantId)
+        .in("id", quoteIds);
+
+      if (quotes) {
+        const quoteStatusMap = new Map<string, string>();
+        quotes.forEach((quote) => {
+          quoteStatusMap.set(quote.id, quote.status);
+        });
+
+        // Update events that need syncing
+        const updates: Array<{ id: string; status: string }> = [];
+        eventsWithQuotes.forEach((event) => {
+          if (!event.quote_id) return;
+          const quoteStatus = quoteStatusMap.get(event.quote_id);
+          if (!quoteStatus) return;
+
+          const correctStatus = quoteStatus === "accepted" ? "planned" : "prepping";
+          if (event.status !== correctStatus) {
+            updates.push({ id: event.id, status: correctStatus });
+          }
+        });
+
+        // Batch update events that need syncing
+        if (updates.length > 0) {
+          // Update in background (don't wait for it)
+          Promise.all(
+            updates.map((update) =>
+              supabase
+                .from("events")
+                .update({ status: update.status, updated_at: new Date().toISOString() })
+                .eq("id", update.id)
+                .eq("tenant_id", tenantId)
+            )
+          ).catch((err) => {
+            console.error("[getEvents] Error syncing event statuses:", err);
+          });
+
+          // Update the returned events with correct statuses
+          updates.forEach((update) => {
+            const event = events.find((e) => e.id === update.id);
+            if (event) {
+              event.status = update.status as Event["status"];
+            }
+          });
+        }
+      }
+    }
+
+    return events;
   } catch (error) {
     console.error("[getEvents] Unexpected error:", error);
     return [];
@@ -483,8 +544,25 @@ export async function createEvent(formData: FormData): Promise<{
     return { error: "End date must be after start date" };
   }
 
-  // Use status from form if provided, otherwise use "confirmed" for quotes or "draft"
-  const eventStatus = statusParam || (quoteId ? "confirmed" : "draft");
+  // Determine event status based on quote status
+  let eventStatus = statusParam;
+  if (!eventStatus && quoteId) {
+    // Check quote status to determine event status
+    const { data: quoteData } = await supabase
+      .from("quotes")
+      .select("status")
+      .eq("id", quoteId)
+      .eq("tenant_id", tenantId)
+      .single();
+    
+    if (quoteData) {
+      eventStatus = quoteData.status === "accepted" ? "planned" : "prepping";
+    } else {
+      eventStatus = "prepping";
+    }
+  } else if (!eventStatus) {
+    eventStatus = "prepping"; // Default for events without quotes
+  }
 
   try {
     let finalQuoteId = quoteId;
@@ -586,7 +664,7 @@ export async function updateEvent(formData: FormData): Promise<{
       updated_at: new Date().toISOString(),
     };
 
-    if (status && ["draft", "confirmed", "in_progress", "completed", "cancelled"].includes(status)) {
+    if (status && ["prepping", "planned", "in_transit", "on_venue", "closed"].includes(status)) {
       updateData.status = status;
     }
 
@@ -860,12 +938,302 @@ export async function createEventForAcceptedQuote(quoteId: string): Promise<{
     eventFormData.append("start_date", quote.start_date);
     eventFormData.append("end_date", quote.end_date);
     eventFormData.append("quote_id", quoteId);
-    eventFormData.append("status", "confirmed");
+    eventFormData.append("status", "planned");
 
     const result = await createEvent(eventFormData);
     return result;
   } catch (error) {
     console.error("[createEventForAcceptedQuote] Unexpected error:", error);
     return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Sync event status with quote status
+ * Updates event status to "planned" if quote is accepted, "prepping" if quote is draft
+ */
+export async function syncEventStatusWithQuote(eventId: string): Promise<{
+  success?: boolean;
+  updated?: boolean;
+  error?: string;
+}> {
+  try {
+    // Get event with quote_id
+    const { data: event, error: eventError } = await supabase
+      .from("events")
+      .select("id, quote_id, status")
+      .eq("id", eventId)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (eventError || !event) {
+      return { error: "Event not found" };
+    }
+
+    if (!event.quote_id) {
+      return { success: true, updated: false }; // No quote to sync with
+    }
+
+    // Get quote status
+    const { data: quote, error: quoteError } = await supabase
+      .from("quotes")
+      .select("status")
+      .eq("id", event.quote_id)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (quoteError || !quote) {
+      return { error: "Quote not found" };
+    }
+
+    // Determine correct event status based on quote status
+    const correctStatus = quote.status === "accepted" ? "planned" : "prepping";
+
+    // Only update if status is different
+    if (event.status === correctStatus) {
+      return { success: true, updated: false };
+    }
+
+    // Update event status
+    const { error: updateError } = await supabase
+      .from("events")
+      .update({ status: correctStatus, updated_at: new Date().toISOString() })
+      .eq("id", eventId)
+      .eq("tenant_id", tenantId);
+
+    if (updateError) {
+      console.error("[syncEventStatusWithQuote] Error:", updateError);
+      return { error: "Failed to update event status" };
+    }
+
+    revalidatePath(`/events/${eventId}`);
+    revalidatePath("/events");
+    return { success: true, updated: true };
+  } catch (error) {
+    console.error("[syncEventStatusWithQuote] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Sync all event statuses with their quotes
+ * Useful for fixing events that got out of sync
+ */
+export async function syncAllEventStatuses(): Promise<{
+  success?: boolean;
+  updated?: number;
+  error?: string;
+}> {
+  try {
+    // Get all events with quotes
+    const { data: events, error: eventsError } = await supabase
+      .from("events")
+      .select("id, quote_id, status")
+      .eq("tenant_id", tenantId)
+      .not("quote_id", "is", null);
+
+    if (eventsError) {
+      console.error("[syncAllEventStatuses] Error:", eventsError);
+      return { error: "Failed to fetch events" };
+    }
+
+    if (!events || events.length === 0) {
+      return { success: true, updated: 0 };
+    }
+
+    // Get all quote statuses
+    const quoteIds = events.map((e) => e.quote_id).filter((id): id is string => id !== null);
+    const { data: quotes, error: quotesError } = await supabase
+      .from("quotes")
+      .select("id, status")
+      .eq("tenant_id", tenantId)
+      .in("id", quoteIds);
+
+    if (quotesError) {
+      console.error("[syncAllEventStatuses] Error:", quotesError);
+      return { error: "Failed to fetch quotes" };
+    }
+
+    // Create a map of quote_id -> status
+    const quoteStatusMap = new Map<string, string>();
+    quotes?.forEach((quote) => {
+      quoteStatusMap.set(quote.id, quote.status);
+    });
+
+    // Update events that need updating
+    let updatedCount = 0;
+    const updates: Array<{ id: string; status: string }> = [];
+
+    events.forEach((event) => {
+      if (!event.quote_id) return;
+
+      const quoteStatus = quoteStatusMap.get(event.quote_id);
+      if (!quoteStatus) return;
+
+      const correctStatus = quoteStatus === "accepted" ? "planned" : "prepping";
+      if (event.status !== correctStatus) {
+        updates.push({ id: event.id, status: correctStatus });
+      }
+    });
+
+    // Batch update events
+    if (updates.length > 0) {
+      for (const update of updates) {
+        const { error: updateError } = await supabase
+          .from("events")
+          .update({ status: update.status, updated_at: new Date().toISOString() })
+          .eq("id", update.id)
+          .eq("tenant_id", tenantId);
+
+        if (!updateError) {
+          updatedCount++;
+        }
+      }
+    }
+
+    revalidatePath("/events");
+    return { success: true, updated: updatedCount };
+  } catch (error) {
+    console.error("[syncAllEventStatuses] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Get events for calendar view (minimal data only)
+ * Automatically syncs event statuses with their quote statuses
+ */
+export async function getEventsForCalendar(
+  startDate: string,
+  endDate: string,
+): Promise<Array<{
+  id: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  location: string | null;
+}>> {
+  try {
+    console.log(`[getEventsForCalendar] Fetching events for date range: ${startDate} to ${endDate}`);
+    console.log(`[getEventsForCalendar] Tenant ID: ${tenantId}`);
+    
+    // First, let's get ALL events for this tenant to debug
+    const { data: allEvents, error: allError } = await supabase
+      .from("events")
+      .select("id, name, start_date, end_date, status, location, quote_id")
+      .eq("tenant_id", tenantId)
+      .order("start_date", { ascending: true });
+    
+    if (allError) {
+      console.error("[getEventsForCalendar] Error fetching all events:", allError);
+    } else {
+      console.log(`[getEventsForCalendar] ALL events in database (${allEvents?.length || 0}):`, allEvents?.map(e => ({ id: e.id, name: e.name, start_date: e.start_date, end_date: e.end_date })));
+    }
+    
+    // Query for events that overlap with the date range
+    // An event overlaps if: start_date <= endDate AND end_date >= startDate
+    const { data, error } = await supabase
+      .from("events")
+      .select("id, name, start_date, end_date, status, location, quote_id")
+      .eq("tenant_id", tenantId)
+      .lte("start_date", endDate) // Event starts on or before endDate
+      .gte("end_date", startDate) // Event ends on or after startDate
+      .order("start_date", { ascending: true });
+    
+    console.log(`[getEventsForCalendar] Query filters: start_date <= ${endDate}, end_date >= ${startDate}`);
+
+    if (error) {
+      console.error("[getEventsForCalendar] Error:", error);
+      return [];
+    }
+
+    const events = data || [];
+    console.log(`[getEventsForCalendar] Found ${events.length} events matching date range:`, events.map(e => ({ id: e.id, name: e.name, start_date: e.start_date, end_date: e.end_date, status: e.status })));
+    
+    // Check if Event4 should match
+    const event4 = allEvents?.find(e => e.name === "Event4" || e.name === "event4");
+    if (event4) {
+      console.log(`[getEventsForCalendar] Event4 found in all events:`, event4);
+      const shouldMatch = event4.start_date <= endDate && event4.end_date >= startDate;
+      console.log(`[getEventsForCalendar] Event4 should match? start_date (${event4.start_date}) <= endDate (${endDate}) = ${event4.start_date <= endDate}, end_date (${event4.end_date}) >= startDate (${startDate}) = ${event4.end_date >= startDate}, overall: ${shouldMatch}`);
+      if (!shouldMatch) {
+        console.warn(`[getEventsForCalendar] Event4 should match but didn't! Check date comparison logic.`);
+      }
+    } else {
+      console.warn(`[getEventsForCalendar] Event4 not found in all events!`);
+    }
+
+    // Sync event statuses with quote statuses (same logic as getEvents)
+    const eventsWithQuotes = events.filter((e) => e.quote_id);
+    if (eventsWithQuotes.length > 0) {
+      const quoteIds = eventsWithQuotes.map((e) => e.quote_id).filter((id): id is string => id !== null);
+      
+      // Get quote statuses
+      const { data: quotes } = await supabase
+        .from("quotes")
+        .select("id, status")
+        .eq("tenant_id", tenantId)
+        .in("id", quoteIds);
+
+      if (quotes) {
+        const quoteStatusMap = new Map<string, string>();
+        quotes.forEach((quote) => {
+          quoteStatusMap.set(quote.id, quote.status);
+        });
+
+        // Update events that need syncing
+        const updates: Array<{ id: string; status: string }> = [];
+        eventsWithQuotes.forEach((event) => {
+          if (!event.quote_id) return;
+          const quoteStatus = quoteStatusMap.get(event.quote_id);
+          if (!quoteStatus) return;
+
+          const correctStatus = quoteStatus === "accepted" ? "planned" : "prepping";
+          if (event.status !== correctStatus) {
+            updates.push({ id: event.id, status: correctStatus });
+          }
+        });
+
+        // Batch update events that need syncing
+        if (updates.length > 0) {
+          // Update in background (don't wait for it)
+          Promise.all(
+            updates.map((update) =>
+              supabase
+                .from("events")
+                .update({ status: update.status, updated_at: new Date().toISOString() })
+                .eq("id", update.id)
+                .eq("tenant_id", tenantId)
+            )
+          ).catch((err) => {
+            console.error("[getEventsForCalendar] Error syncing event statuses:", err);
+          });
+
+          // Update the returned events with correct statuses
+          updates.forEach((update) => {
+            const event = events.find((e) => e.id === update.id);
+            if (event) {
+              event.status = update.status;
+            }
+          });
+        }
+      }
+    }
+
+    const result = events.map((event) => ({
+      id: event.id,
+      title: event.name,
+      startDate: event.start_date,
+      endDate: event.end_date,
+      status: event.status,
+      location: event.location,
+    }));
+
+    console.log(`[getEventsForCalendar] Returning ${result.length} events:`, result.map(e => ({ id: e.id, title: e.title, startDate: e.startDate, endDate: e.endDate })));
+    return result;
+  } catch (error) {
+    console.error("[getEventsForCalendar] Unexpected error:", error);
+    return [];
   }
 }

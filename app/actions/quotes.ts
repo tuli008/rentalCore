@@ -1319,6 +1319,29 @@ export async function confirmQuotation(formData: FormData) {
     return { ok: false, error: "Failed to update quote status." };
   }
 
+  // Update existing event status to "planned" if event already exists for this quote
+  const { data: existingEvent } = await supabase
+    .from("events")
+    .select("id")
+    .eq("quote_id", quoteId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  if (existingEvent) {
+    const { error: updateEventError } = await supabase
+      .from("events")
+      .update({ status: "planned", updated_at: new Date().toISOString() })
+      .eq("id", existingEvent.id)
+      .eq("tenant_id", tenantId);
+
+    if (updateEventError) {
+      console.error("[confirmQuotation] Error updating existing event status:", updateEventError);
+      // Don't fail the quote confirmation if event update fails
+    } else {
+      console.log(`[confirmQuotation] Updated existing event ${existingEvent.id} status to 'planned'`);
+    }
+  }
+
   // Reduce inventory availability for each item
   for (const item of quote.items) {
     const check = availabilityChecks.find((c) => c.itemId === item.item_id);
@@ -1418,7 +1441,7 @@ export async function confirmQuotation(formData: FormData) {
     eventFormData.append("start_date", quote.start_date);
     eventFormData.append("end_date", quote.end_date);
     eventFormData.append("quote_id", quoteId);
-    eventFormData.append("status", "confirmed");
+    eventFormData.append("status", "planned");
 
     const eventResult = await createEvent(eventFormData);
     if (eventResult.error) {
