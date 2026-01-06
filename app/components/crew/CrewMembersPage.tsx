@@ -4,6 +4,7 @@ import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { CrewMember } from "@/app/actions/crew";
 import { isAdminClient } from "@/lib/auth-client";
+import { COMMON_TECHNICIAN_TYPES } from "@/lib/technician-types";
 
 interface CrewMembersPageProps {
   initialCrewMembers: CrewMember[];
@@ -55,6 +56,7 @@ export default function CrewMembersPage({
     email: "",
     contact: "",
     role: "Own Crew" as "Own Crew" | "Freelancer",
+    technician_type: "",
   });
 
   const handleInputChange = (
@@ -79,6 +81,9 @@ export default function CrewMembersPage({
     formDataObj.append("email", formData.email);
     formDataObj.append("contact", formData.contact);
     formDataObj.append("role", formData.role);
+    if (formData.technician_type) {
+      formDataObj.append("technician_type", formData.technician_type);
+    }
 
     if (editingId) {
       formDataObj.append("id", editingId);
@@ -115,6 +120,7 @@ export default function CrewMembersPage({
       email: "",
       contact: "",
       role: "Own Crew",
+      technician_type: "",
     });
     setError(null);
     setSuccess(null);
@@ -126,6 +132,7 @@ export default function CrewMembersPage({
       email: member.email || "",
       contact: member.contact || "",
       role: member.role,
+      technician_type: member.technician_type || "",
     });
     setEditingId(member.id);
     setShowAddForm(true);
@@ -323,6 +330,29 @@ export default function CrewMembersPage({
                     <option value="Freelancer">Freelancer</option>
                   </select>
                 </div>
+
+                <div>
+                  <label
+                    htmlFor="technician_type"
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Technician Type
+                  </label>
+                  <select
+                    id="technician_type"
+                    name="technician_type"
+                    value={formData.technician_type}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select Technician Type</option>
+                    {COMMON_TECHNICIAN_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {(error || success) && (
@@ -505,6 +535,9 @@ export default function CrewMembersPage({
                     Role
                   </th>
                   <th className="text-left py-3 px-4 font-semibold text-gray-700 text-sm">
+                    Technician Type
+                  </th>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700 text-sm">
                     Leave Status
                   </th>
                   {isAdmin && (
@@ -518,7 +551,7 @@ export default function CrewMembersPage({
                 {crewMembers.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={isAdmin ? 6 : 5}
+                      colSpan={isAdmin ? 7 : 6}
                       className="py-8 px-4 text-center text-gray-500"
                     >
                       No crew members found.{isAdmin && " Add your first crew member above."}
@@ -549,6 +582,9 @@ export default function CrewMembersPage({
                         >
                           {member.role}
                         </span>
+                      </td>
+                      <td className="py-3 px-4 text-gray-700">
+                        {member.technician_type || "—"}
                       </td>
                       <td className="py-3 px-4">
                         {member.on_leave ? (

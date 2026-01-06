@@ -12,6 +12,7 @@ export interface CrewMember {
   email: string | null;
   contact: string | null;
   role: "Own Crew" | "Freelancer";
+  technician_type: string | null; // Primary technician specialty (e.g., "Lighting Technician")
   on_leave: boolean;
   leave_start_date: string | null;
   leave_end_date: string | null;
@@ -74,6 +75,7 @@ export async function createCrewMember(formData: FormData): Promise<{
   const email = String(formData.get("email") || "").trim() || null;
   const contact = String(formData.get("contact") || "").trim() || null;
   const role = String(formData.get("role") || "").trim() as "Own Crew" | "Freelancer";
+  const technicianType = String(formData.get("technician_type") || "").trim() || null;
 
   if (!name) {
     return { error: "Name is required" };
@@ -95,6 +97,7 @@ export async function createCrewMember(formData: FormData): Promise<{
       email,
       contact,
       role,
+      technician_type: technicianType,
       tenant_id: tenantId,
     });
 
@@ -133,6 +136,7 @@ export async function updateCrewMember(formData: FormData): Promise<{
   const email = String(formData.get("email") || "").trim() || null;
   const contact = String(formData.get("contact") || "").trim() || null;
   const role = String(formData.get("role") || "").trim() as "Own Crew" | "Freelancer";
+  const technicianType = String(formData.get("technician_type") || "").trim() || null;
 
   if (!id) {
     return { error: "Crew member ID is required" };
@@ -167,6 +171,7 @@ export async function updateCrewMember(formData: FormData): Promise<{
         email,
         contact,
         role,
+        technician_type: technicianType,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)

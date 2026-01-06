@@ -42,6 +42,18 @@ interface QuoteDetailPageProps {
   addQuoteItem: (
     formData: FormData,
   ) => Promise<{ error?: string; success?: boolean }>;
+  addQuoteLaborItem: (
+    formData: FormData,
+  ) => Promise<{ 
+    error?: string; 
+    success?: boolean;
+    warning?: string;
+    availability?: {
+      available: number;
+      total: number;
+      unavailable: number;
+    };
+  }>;
   updateQuoteItem: (
     formData: FormData,
   ) => Promise<{ error?: string; success?: boolean }>;
@@ -55,6 +67,7 @@ export default function QuoteDetailPage({
   updateQuote,
   deleteQuote,
   addQuoteItem,
+  addQuoteLaborItem,
   updateQuoteItem,
   deleteQuoteItem,
 }: QuoteDetailPageProps) {
@@ -375,6 +388,43 @@ export default function QuoteDetailPage({
     }
   }, [quote.items, quote.id, scheduleRefresh, showToast]);
 
+  // State for crew availability error modal
+  const [crewAvailabilityError, setCrewAvailabilityError] = useState<{
+    message: string;
+    availability?: { available: number; total: number; unavailable: number };
+  } | null>(null);
+
+  const handleAddLabor = useCallback(async (
+    technicianType: string,
+    days: number,
+    ratePerDay: number,
+  ) => {
+    const formData = new FormData();
+    formData.append("quote_id", quote.id);
+    formData.append("technician_type", technicianType);
+    formData.append("days", days.toString());
+    formData.append("rate_per_day", ratePerDay.toString());
+    formData.append("start_date", quote.start_date);
+    formData.append("end_date", quote.end_date);
+
+    try {
+      const result = await addQuoteLaborItem(formData);
+      if (result.success) {
+        // Refresh to show new labor item
+        scheduleRefresh(`add-labor-${Date.now()}`, 500);
+        showToast(`${technicianType} added successfully`);
+      } else if (result.error) {
+        // Show prominent modal for crew availability errors
+        setCrewAvailabilityError({
+          message: result.error,
+          availability: result.availability,
+        });
+      }
+    } catch (error) {
+      showToast("Failed to add labor item. Please try again.");
+    }
+  }, [quote.id, quote.start_date, quote.end_date, scheduleRefresh, showToast, addQuoteLaborItem]);
+
   // Debounced save function with instant UI updates
   const saveQuantity = useCallback(async (quoteItemId: string, quantity: number) => {
     // Validate: integers >= 0 only
@@ -518,11 +568,17 @@ export default function QuoteDetailPage({
     const formData = new FormData();
     formData.append("quote_id", quote.id);
 
+    console.log("[QuoteDetailPage] Attempting to confirm quote:", quote.id);
+    console.log("[QuoteDetailPage] Quote has labor items:", quote.items.filter(item => item.item_type === "labor"));
+    
     const result = await confirmQuotation(formData);
+    console.log("[QuoteDetailPage] Confirm result:", result);
+    
     if (result.ok) {
       scheduleRefresh("confirm", 0);
       showToast(result.message || "Quotation confirmed successfully! Event created automatically.");
     } else {
+      console.error("[QuoteDetailPage] Confirmation failed:", result.error);
       showToast(result.error || "Failed to confirm quotation.");
     }
     setIsConfirming(false);
@@ -774,6 +830,66 @@ export default function QuoteDetailPage({
   // Content wrapper - same for both mobile and desktop
   const content = (
     <>
+    {/* Crew Availability Error Modal */}
+    {crewAvailabilityError && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-[1000] flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <svg
+                  className="w-6 h-6 text-red-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+              </div>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Cannot Add Labor Item
+              </h3>
+              <p className="text-sm text-gray-700 mb-4 whitespace-pre-line">
+                {crewAvailabilityError.message}
+              </p>
+              {crewAvailabilityError.availability && (
+                <div className="bg-gray-50 rounded-md p-3 mb-4">
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <div className="flex justify-between">
+                      <span>Total Crew Members:</span>
+                      <span className="font-medium">{crewAvailabilityError.availability.total}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Available:</span>
+                      <span className="font-medium text-green-600">{crewAvailabilityError.availability.available}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Unavailable (Assigned/On Leave):</span>
+                      <span className="font-medium text-red-600">{crewAvailabilityError.availability.unavailable}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setCrewAvailabilityError(null)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row w-full overflow-x-hidden">
         {toastMessage ? (
           <div className="fixed top-4 right-4 z-[1000]">
@@ -875,324 +991,461 @@ export default function QuoteDetailPage({
 
         {/* Items Section */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6 mb-6">
-          <div className="mb-2">
-            <h2 className="text-lg font-semibold text-gray-900">Items</h2>
-          </div>
+          {/* Separate inventory and labor items */}
+          {(() => {
+            const inventoryItems = quote.items.filter(item => !item.item_type || item.item_type === "inventory");
+            const laborItems = quote.items.filter(item => item.item_type === "labor");
+            const hasAnyItems = inventoryItems.length > 0 || laborItems.length > 0;
 
-          {quote.items.length === 0 ? (
-            <QuoteDropZone isEmpty={true} isReadOnly={isReadOnly} />
-          ) : isLoadingAvailabilities && !isReadOnly ? (
-            // Show loading state while fetching availability data (only for draft quotes)
-            <div className="flex items-center justify-center py-12">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <p className="text-sm text-gray-600">Loading availability data...</p>
-              </div>
-            </div>
-          ) : isReadOnly ? (
-            // Table format for accepted quotes
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-gray-300">
-                    <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">
-                      Item Name
-                    </th>
-                    <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
-                      Quantity
-                    </th>
-                    <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
-                      Price
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quote.items.map((item) => {
-                    const localQuantityStr = localQuantities.get(item.id);
-                    const displayQuantity = localQuantityStr
-                      ? parseInt(localQuantityStr, 10) || 0
-                      : item.quantity;
-                    const lineTotal =
-                      displayQuantity * item.unit_price_snapshot * numberOfDays;
+            if (!hasAnyItems) {
+              return <QuoteDropZone isEmpty={true} isReadOnly={isReadOnly} />;
+            }
 
-                    return (
-                      <tr
-                        key={item.id}
-                        className="border-b border-gray-200 hover:bg-gray-50"
-                      >
-                        <td className="py-2 px-3 text-gray-900 font-medium">
-                          {item.item_name || "Unknown Item"}
-                        </td>
-                        <td className="py-2 px-3 text-right text-gray-700">
-                          {displayQuantity}
-                        </td>
-                        <td className="py-2 px-3 text-right text-gray-900 font-semibold">
-                          ${lineTotal.toFixed(2)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly}>
-              {/* Only render items when availability data is loaded to prevent flash of incorrect data */}
-              {isLoadingAvailabilities ? (
-                <div className="flex items-center justify-center py-12 mt-4">
+            if (isLoadingAvailabilities && !isReadOnly && inventoryItems.length > 0) {
+              return (
+                <div className="flex items-center justify-center py-12">
                   <div className="text-center">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
                     <p className="text-sm text-gray-600">Loading availability data...</p>
                   </div>
                 </div>
-              ) : (
-              <div className="mt-1 space-y-1">
-              {quote.items.map((item) => {
-                // Only get breakdown if data is loaded, otherwise use safe defaults
-                const breakdown = isLoadingAvailabilities
-                  ? null
-                  : (itemAvailabilities.get(item.item_id) || {
-                      available: 0,
-                      reserved: 0,
-                      inTransit: 0,
-                      outOfService: 0,
-                      total: 0,
-                    });
-                // Use local quantity if available, otherwise fall back to server quantity
-                const localQuantityStr = localQuantities.get(item.id);
-                const displayQuantity = localQuantityStr
-                  ? parseInt(localQuantityStr, 10) || 0
-                  : item.quantity;
-                // Reserved shows what the user typed (this quote's quantity)
-                const realTimeReserved = displayQuantity;
-                const lineTotal =
-                  displayQuantity * item.unit_price_snapshot * numberOfDays;
-                // Use effectiveAvailable if available (date-aware), otherwise fall back to available
-                // Only calculate if breakdown is loaded
-                const effectiveAvailable = breakdown
-                  ? (breakdown.effectiveAvailable !== undefined
-                      ? breakdown.effectiveAvailable
-                      : breakdown.available)
-                  : 0;
-                const isOverAvailable = breakdown ? displayQuantity > effectiveAvailable : false;
-                const isHighlighted = highlightedItemId === item.id;
+              );
+            }
 
-                // Full view for draft quotes
-                return (
-                  <div
-                    id={`quote-item-${item.id}`}
-                    key={item.id}
-                    className={`p-2.5 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
-                      isHighlighted ? "ring-2 ring-blue-500 ring-offset-2" : ""
-                    }`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <h3 className="font-medium text-gray-900 truncate">
-                            {item.item_name || "Unknown Item"}
-                          </h3>
-                          {!isLoadingAvailabilities && isOverAvailable && (
-                            <span
-                              className={`px-2 py-0.5 text-xs rounded whitespace-nowrap ${
-                                effectiveAvailable === 0
-                                  ? "bg-red-100 text-red-800"
-                                  : "bg-yellow-100 text-yellow-800"
+            return (
+              <>
+                {/* Inventory Items Section */}
+                <div className="mb-8">
+                  <h2 className="text-lg font-semibold text-gray-900 mb-4">Inventory</h2>
+                  
+                  {inventoryItems.length > 0 ? (
+                    <>
+                    {isReadOnly ? (
+                      // Table format for accepted quotes
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="border-b-2 border-gray-300">
+                              <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Item Name
+                              </th>
+                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Quantity
+                              </th>
+                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Price
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inventoryItems.map((item) => {
+                              const localQuantityStr = localQuantities.get(item.id);
+                              const displayQuantity = localQuantityStr
+                                ? parseInt(localQuantityStr, 10) || 0
+                                : item.quantity;
+                              const lineTotal =
+                                displayQuantity * item.unit_price_snapshot * numberOfDays;
+
+                              return (
+                                <tr
+                                  key={item.id}
+                                  className="border-b border-gray-200 hover:bg-gray-50"
+                                >
+                                  <td className="py-2 px-3 text-gray-900 font-medium">
+                                    {item.item_name || "Unknown Item"}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-gray-700">
+                                    {displayQuantity}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-gray-900 font-semibold">
+                                    ${lineTotal.toFixed(2)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly}>
+                        <div className="mt-1 space-y-1">
+                          {inventoryItems.map((item) => {
+                            // Only get breakdown if data is loaded, otherwise use safe defaults
+                            const breakdown = isLoadingAvailabilities
+                              ? null
+                              : (itemAvailabilities.get(item.item_id) || {
+                                  available: 0,
+                                  reserved: 0,
+                                  inTransit: 0,
+                                  outOfService: 0,
+                                  total: 0,
+                                });
+                            // Use local quantity if available, otherwise fall back to server quantity
+                            const localQuantityStr = localQuantities.get(item.id);
+                            const displayQuantity = localQuantityStr
+                              ? parseInt(localQuantityStr, 10) || 0
+                              : item.quantity;
+                            // Reserved shows what the user typed (this quote's quantity)
+                            const realTimeReserved = displayQuantity;
+                            const lineTotal =
+                              displayQuantity * item.unit_price_snapshot * numberOfDays;
+                            // Use effectiveAvailable if available (date-aware), otherwise fall back to available
+                            // Only calculate if breakdown is loaded
+                            const effectiveAvailable = breakdown
+                              ? (breakdown.effectiveAvailable !== undefined
+                                  ? breakdown.effectiveAvailable
+                                  : breakdown.available)
+                              : 0;
+                            const isOverAvailable = breakdown ? displayQuantity > effectiveAvailable : false;
+                            const isHighlighted = highlightedItemId === item.id;
+
+                            // Full view for draft quotes
+                            return (
+                              <div
+                                id={`quote-item-${item.id}`}
+                                key={item.id}
+                                className={`p-2.5 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
+                                  isHighlighted ? "ring-2 ring-blue-500 ring-offset-2" : ""
+                                }`}
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                                      <h3 className="font-medium text-gray-900 truncate">
+                                        {item.item_name || "Unknown Item"}
+                                      </h3>
+                                      {!isLoadingAvailabilities && isOverAvailable && (
+                                        <span
+                                          className={`px-2 py-0.5 text-xs rounded whitespace-nowrap ${
+                                            effectiveAvailable === 0
+                                              ? "bg-red-100 text-red-800"
+                                              : "bg-yellow-100 text-yellow-800"
+                                          }`}
+                                        >
+                                          Over available ({effectiveAvailable} effective
+                                          available)
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-1">
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          onClick={() => {
+                                            const newQty = Math.max(0, displayQuantity - 1);
+                                            updateQuantity(item.id, newQty);
+                                          }}
+                                          disabled={displayQuantity <= 0}
+                                          className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                          <svg
+                                            className="w-4 h-4"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                          >
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={2}
+                                              d="M20 12H4"
+                                            />
+                                          </svg>
+                                        </button>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="1"
+                                          value={
+                                            localQuantityStr ?? item.quantity.toString()
+                                          }
+                                          onChange={(e) => {
+                                            const value = e.target.value;
+                                            // Allow empty string for typing
+                                            if (value === "") {
+                                              // Cancel any pending debounce timer
+                                              const existingTimer =
+                                                debounceTimersRef.current.get(item.id);
+                                              if (existingTimer) {
+                                                clearTimeout(existingTimer);
+                                                debounceTimersRef.current.delete(item.id);
+                                              }
+                                              setLocalQuantities((prev) => {
+                                                const newMap = new Map(prev);
+                                                newMap.set(item.id, "");
+                                                return newMap;
+                                              });
+                                              return;
+                                            }
+                                            const numValue = parseInt(value, 10);
+                                            // Only update if it's a valid integer >= 0
+                                            if (!Number.isNaN(numValue) && numValue >= 0) {
+                                              updateQuantity(item.id, numValue);
+                                            }
+                                          }}
+                                          onBlur={(e) => {
+                                            const value = e.target.value;
+                                            // On blur, if empty or invalid, set to 0
+                                            const numValue = parseInt(value, 10);
+                                            if (Number.isNaN(numValue) || numValue < 0) {
+                                              updateQuantity(item.id, 0);
+                                            }
+                                          }}
+                                          className="w-16 sm:w-16 px-2 py-1.5 sm:py-1 text-center font-medium border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            const newQty = displayQuantity + 1;
+                                            updateQuantity(item.id, newQty);
+                                          }}
+                                          className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors"
+                                        >
+                                          <svg
+                                            className="w-4 h-4"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                          >
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={2}
+                                              d="M12 4v16m8-8H4"
+                                            />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                      <span className="whitespace-nowrap">
+                                        × ${item.unit_price_snapshot.toFixed(2)}
+                                      </span>
+                                      <span className="whitespace-nowrap">
+                                        × {numberOfDays} day{numberOfDays !== 1 ? "s" : ""}
+                                      </span>
+                                    </div>
+                                    {/* Availability breakdown - only show when data is loaded */}
+                                    {!isLoadingAvailabilities && breakdown && (
+                                    <div className="mt-1 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-gray-500">
+                                      <span className="whitespace-nowrap">
+                                        <span className="font-medium text-gray-700">
+                                          {breakdown.effectiveAvailable !== undefined
+                                            ? "Effective Available:"
+                                            : "Available:"}
+                                        </span>{" "}
+                                        {breakdown.effectiveAvailable !== undefined
+                                          ? breakdown.effectiveAvailable
+                                          : breakdown.available}
+                                      </span>
+                                      {breakdown.reservedInOverlappingEvents !==
+                                        undefined &&
+                                        breakdown.reservedInOverlappingEvents > 0 && (
+                                          <span className="whitespace-nowrap">
+                                            <span className="font-medium text-gray-700">
+                                              Reserved in overlapping events:
+                                            </span>{" "}
+                                            {breakdown.reservedInOverlappingEvents}
+                                          </span>
+                                        )}
+                                      {realTimeReserved > 0 && (
+                                        <span className="whitespace-nowrap">
+                                          <span className="font-medium text-gray-700">
+                                            Reserved:
+                                          </span>{" "}
+                                          {realTimeReserved}
+                                        </span>
+                                      )}
+                                      {/* Only show In-Transit for serialized items */}
+                                      {item.item_is_serialized &&
+                                        breakdown.inTransit > 0 && (
+                                          <span className="whitespace-nowrap">
+                                            <span className="font-medium text-gray-700">
+                                              In-Transit:
+                                            </span>{" "}
+                                            {breakdown.inTransit}
+                                          </span>
+                                        )}
+                                      {breakdown.outOfService > 0 && (
+                                        <span className="whitespace-nowrap">
+                                          <span className="font-medium text-gray-700">
+                                            Out-of-Service:
+                                          </span>{" "}
+                                          {breakdown.outOfService}
+                                        </span>
+                                      )}
+                                      <span className="whitespace-nowrap">
+                                        <span className="font-medium text-gray-700">
+                                          Total:
+                                        </span>{" "}
+                                        {breakdown.total}
+                                      </span>
+                                    </div>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center justify-between sm:justify-end gap-2 sm:flex-col sm:items-end">
+                                    <div className="text-right sm:text-right">
+                                      <div className="text-sm font-semibold text-gray-900">
+                                        ${lineTotal.toFixed(2)}
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        Line total
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => handleDeleteItem(item.id)}
+                                      className="p-2 sm:p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                                    >
+                                      <svg
+                                        className="w-5 h-5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth={2}
+                                          d="M6 18L18 6M6 6l12 12"
+                                        />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </QuoteDropZone>
+                    )}
+                    </>
+                  ) : !isReadOnly ? (
+                    <QuoteDropZone isEmpty={true} isReadOnly={isReadOnly} />
+                  ) : (
+                    <p className="text-sm text-gray-500 italic py-4">No inventory items</p>
+                  )}
+                </div>
+
+                {/* Labor Items Section */}
+                {laborItems.length > 0 && (
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Labor</h2>
+                    {isReadOnly ? (
+                      // Table format for accepted quotes
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse">
+                          <thead>
+                            <tr className="border-b-2 border-gray-300">
+                              <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Technician Type
+                              </th>
+                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Days
+                              </th>
+                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Rate/Day
+                              </th>
+                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                                Total
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {laborItems.map((item) => {
+                              const days = item.labor_days || item.quantity || 0;
+                              const ratePerDay = item.labor_rate_per_day || item.unit_price_snapshot || 0;
+                              const lineTotal = days * ratePerDay;
+
+                              return (
+                                <tr
+                                  key={item.id}
+                                  className="border-b border-gray-200 hover:bg-gray-50"
+                                >
+                                  <td className="py-2 px-3 text-gray-900 font-medium">
+                                    {item.labor_technician_type || "Unknown"}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-gray-700">
+                                    {days}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-gray-700">
+                                    ${ratePerDay.toFixed(2)}
+                                  </td>
+                                  <td className="py-2 px-3 text-right text-gray-900 font-semibold">
+                                    ${lineTotal.toFixed(2)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {laborItems.map((item) => {
+                          const days = item.labor_days || item.quantity || 0;
+                          const ratePerDay = item.labor_rate_per_day || item.unit_price_snapshot || 0;
+                          const lineTotal = days * ratePerDay;
+                          const isHighlighted = highlightedItemId === item.id;
+
+                          return (
+                            <div
+                              id={`quote-item-${item.id}`}
+                              key={item.id}
+                              className={`p-2.5 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
+                                isHighlighted ? "ring-2 ring-blue-500 ring-offset-2" : ""
                               }`}
                             >
-                              Over available ({effectiveAvailable} effective
-                              available)
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-1">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => {
-                                const newQty = Math.max(0, displayQuantity - 1);
-                                updateQuantity(item.id, newQty);
-                              }}
-                              disabled={displayQuantity <= 0}
-                              className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M20 12H4"
-                                />
-                              </svg>
-                            </button>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={
-                                localQuantityStr ?? item.quantity.toString()
-                              }
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                // Allow empty string for typing
-                                if (value === "") {
-                                  // Cancel any pending debounce timer
-                                  const existingTimer =
-                                    debounceTimersRef.current.get(item.id);
-                                  if (existingTimer) {
-                                    clearTimeout(existingTimer);
-                                    debounceTimersRef.current.delete(item.id);
-                                  }
-                                  setLocalQuantities((prev) => {
-                                    const newMap = new Map(prev);
-                                    newMap.set(item.id, "");
-                                    return newMap;
-                                  });
-                                  return;
-                                }
-                                const numValue = parseInt(value, 10);
-                                // Only update if it's a valid integer >= 0
-                                if (!Number.isNaN(numValue) && numValue >= 0) {
-                                  updateQuantity(item.id, numValue);
-                                }
-                              }}
-                              onBlur={(e) => {
-                                const value = e.target.value;
-                                // On blur, if empty or invalid, set to 0
-                                const numValue = parseInt(value, 10);
-                                if (Number.isNaN(numValue) || numValue < 0) {
-                                  updateQuantity(item.id, 0);
-                                }
-                              }}
-                              className="w-16 sm:w-16 px-2 py-1.5 sm:py-1 text-center font-medium border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                            <button
-                              onClick={() => {
-                                const newQty = displayQuantity + 1;
-                                updateQuantity(item.id, newQty);
-                              }}
-                              className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors"
-                            >
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M12 4v16m8-8H4"
-                                />
-                              </svg>
-                            </button>
-                          </div>
-                          <span className="whitespace-nowrap">
-                            × ${item.unit_price_snapshot.toFixed(2)}
-                          </span>
-                          <span className="whitespace-nowrap">
-                            × {numberOfDays} day{numberOfDays !== 1 ? "s" : ""}
-                          </span>
-                        </div>
-                        {/* Availability breakdown - only show when data is loaded */}
-                        {!isLoadingAvailabilities && breakdown && (
-                        <div className="mt-1 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-gray-500">
-                          <span className="whitespace-nowrap">
-                            <span className="font-medium text-gray-700">
-                              {breakdown.effectiveAvailable !== undefined
-                                ? "Effective Available:"
-                                : "Available:"}
-                            </span>{" "}
-                            {breakdown.effectiveAvailable !== undefined
-                              ? breakdown.effectiveAvailable
-                              : breakdown.available}
-                          </span>
-                          {breakdown.reservedInOverlappingEvents !==
-                            undefined &&
-                            breakdown.reservedInOverlappingEvents > 0 && (
-                              <span className="whitespace-nowrap">
-                                <span className="font-medium text-gray-700">
-                                  Reserved in overlapping events:
-                                </span>{" "}
-                                {breakdown.reservedInOverlappingEvents}
-                              </span>
-                            )}
-                          {realTimeReserved > 0 && (
-                            <span className="whitespace-nowrap">
-                              <span className="font-medium text-gray-700">
-                                Reserved:
-                              </span>{" "}
-                              {realTimeReserved}
-                            </span>
-                          )}
-                          {/* Only show In-Transit for serialized items */}
-                          {item.item_is_serialized &&
-                            breakdown.inTransit > 0 && (
-                              <span className="whitespace-nowrap">
-                                <span className="font-medium text-gray-700">
-                                  In-Transit:
-                                </span>{" "}
-                                {breakdown.inTransit}
-                              </span>
-                            )}
-                          {breakdown.outOfService > 0 && (
-                            <span className="whitespace-nowrap">
-                              <span className="font-medium text-gray-700">
-                                Out-of-Service:
-                              </span>{" "}
-                              {breakdown.outOfService}
-                            </span>
-                          )}
-                          <span className="whitespace-nowrap">
-                            <span className="font-medium text-gray-700">
-                              Total:
-                            </span>{" "}
-                            {breakdown.total}
-                          </span>
-                        </div>
-                        )}
+                              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                                    <h3 className="font-medium text-gray-900 truncate">
+                                      {item.labor_technician_type || "Unknown"}
+                                    </h3>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-1">
+                                    <span className="whitespace-nowrap">
+                                      {days} day{days !== 1 ? "s" : ""}
+                                    </span>
+                                    <span className="whitespace-nowrap">
+                                      × ${ratePerDay.toFixed(2)}/day
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between sm:justify-end gap-2 sm:flex-col sm:items-end">
+                                  <div className="text-right sm:text-right">
+                                    <div className="text-sm font-semibold text-gray-900">
+                                      ${lineTotal.toFixed(2)}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      Line total
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteItem(item.id)}
+                                    className="p-2 sm:p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                                  >
+                                    <svg
+                                      className="w-5 h-5"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M6 18L18 6M6 6l12 12"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="flex items-center justify-between sm:justify-end gap-2 sm:flex-col sm:items-end">
-                        <div className="text-right sm:text-right">
-                          <div className="text-sm font-semibold text-gray-900">
-                            ${lineTotal.toFixed(2)}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            Line total
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleDeleteItem(item.id)}
-                          className="p-2 sm:p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors flex-shrink-0"
-                        >
-                          <svg
-                            className="w-5 h-5"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M6 18L18 6M6 6l12 12"
-                            />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                );
-              })}
-              </div>
-              )}
-            </QuoteDropZone>
-          )}
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Summary */}
@@ -1319,6 +1572,7 @@ export default function QuoteDetailPage({
         <div className="hidden lg:flex lg:order-2 flex-shrink-0">
           <QuoteSidebar
             onAddItem={handleAddItem}
+            onAddLabor={handleAddLabor}
             existingQuoteItems={quote.items}
             quoteContext={memoizedQuoteContext}
             quoteSummary={{
@@ -1344,6 +1598,7 @@ export default function QuoteDetailPage({
               <div className="h-1 w-12 bg-gray-300 rounded-full mx-auto mt-2" />
               <QuoteSidebar
                 onAddItem={handleAddItem}
+                onAddLabor={handleAddLabor}
                 existingQuoteItems={quote.items}
                 quoteContext={memoizedQuoteContext}
                 quoteSummary={{

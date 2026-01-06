@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getCrewMembers, type CrewMember } from "@/app/actions/crew";
 import { checkCrewAvailability, type CrewAvailability } from "@/app/actions/events";
+import { COMMON_TECHNICIAN_TYPES } from "@/lib/technician-types";
 
 interface CrewSidebarProps {
   eventId: string;
@@ -14,17 +15,7 @@ interface CrewSidebarProps {
   onClose?: () => void;
 }
 
-const COMMON_ROLES = [
-  "Sound Tech",
-  "Driver",
-  "Rigger",
-  "Camera Operator",
-  "Lighting Tech",
-  "Stagehand",
-  "Lead",
-  "Assistant",
-  "Technician",
-];
+const COMMON_ROLES = COMMON_TECHNICIAN_TYPES;
 
 export default function CrewSidebar({
   eventId,

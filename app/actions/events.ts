@@ -42,6 +42,12 @@ export interface EventCrew {
   crew_member_contact?: string;
 }
 
+// Role requirements are derived from quote labor items (no separate table)
+export interface RoleRequirement {
+  role_name: string;
+  quantity_required: number;
+}
+
 export interface EventTask {
   id: string;
   event_id: string;
@@ -178,11 +184,13 @@ async function copyQuoteItemsToEvent(eventId: string, quoteId: string): Promise<
       return true;
     }
 
-    // Fetch all quote items
+    // Fetch all quote items (only inventory items, not labor)
     const { data: quoteItems, error: quoteItemsError } = await supabase
       .from("quote_items")
-      .select("item_id, quantity, unit_price_snapshot")
-      .eq("quote_id", quoteId);
+      .select("item_id, quantity, unit_price_snapshot, item_type")
+      .eq("quote_id", quoteId)
+      .eq("item_type", "inventory") // Only copy inventory items, not labor
+      .not("item_id", "is", null); // Ensure item_id is not null
 
     if (quoteItemsError) {
       console.error("[copyQuoteItemsToEvent] Error fetching quote items:", quoteItemsError);
@@ -190,19 +198,21 @@ async function copyQuoteItemsToEvent(eventId: string, quoteId: string): Promise<
     }
 
     if (!quoteItems || quoteItems.length === 0) {
-      console.log("[copyQuoteItemsToEvent] No quote items to copy");
+      console.log("[copyQuoteItemsToEvent] No inventory items to copy");
       return true; // Not an error, just no items
     }
 
-    // Insert all quote items into event_inventory
-    const eventInventoryItems = quoteItems.map((item) => ({
-      event_id: eventId,
-      item_id: item.item_id,
-      quantity: item.quantity,
-      unit_price_snapshot: item.unit_price_snapshot,
-      tenant_id: tenantId,
-      notes: null,
-    }));
+    // Insert all inventory quote items into event_inventory
+    const eventInventoryItems = quoteItems
+      .filter((item) => item.item_id) // Safety check
+      .map((item) => ({
+        event_id: eventId,
+        item_id: item.item_id,
+        quantity: item.quantity,
+        unit_price_snapshot: item.unit_price_snapshot,
+        tenant_id: tenantId,
+        notes: null,
+      }));
 
     const { error: inventoryError } = await supabase
       .from("event_inventory")
@@ -400,6 +410,120 @@ export async function checkCrewAvailability(
 }
 
 /**
+ * Check crew availability by technician type for a date range
+ * Returns the count of available crew members for the given technician type
+ */
+export async function checkCrewAvailabilityByType(
+  technicianType: string,
+  startDate: string,
+  endDate: string,
+  excludeEventId?: string,
+): Promise<{
+  available: number;
+  total: number;
+  unavailable: number;
+}> {
+  console.log(`[checkCrewAvailabilityByType] CALLED with: technicianType="${technicianType}", startDate="${startDate}", endDate="${endDate}"`);
+  
+  try {
+    const supabase = await createServerSupabaseClient();
+    
+    // Get all crew members with the matching technician type
+    const { data: allCrew, error: crewError } = await supabase
+      .from("crew_members")
+      .select("id, on_leave, leave_start_date, leave_end_date, technician_type")
+      .eq("tenant_id", tenantId)
+      .eq("technician_type", technicianType); // Only count crew members with this technician type
+
+    if (crewError || !allCrew) {
+      console.error("[checkCrewAvailabilityByType] Error fetching crew:", crewError);
+      return { available: 0, total: 0, unavailable: 0 };
+    }
+
+    const totalCrew = allCrew.length;
+    console.log(`[checkCrewAvailabilityByType] Found ${totalCrew} crew members with type "${technicianType}"`);
+    
+    // Parse dates - handle both date-only strings and full timestamps
+    const eventStart = new Date(startDate);
+    eventStart.setHours(0, 0, 0, 0); // Normalize to start of day
+    const eventEnd = new Date(endDate);
+    eventEnd.setHours(23, 59, 59, 999); // Normalize to end of day
+
+    // Get all crew assignments that overlap with this date range
+    // We check ALL assignments (any role) because a crew member assigned to any role
+    // on these dates is unavailable for this role too
+    let overlappingAssignmentsQuery = supabase
+      .from("event_crew")
+      .select("crew_member_id, role, events:event_id!inner(start_date, end_date)")
+      .eq("tenant_id", tenantId);
+
+    if (excludeEventId) {
+      overlappingAssignmentsQuery = overlappingAssignmentsQuery.neq("event_id", excludeEventId);
+    }
+
+    const { data: assignments, error: assignmentsError } = await overlappingAssignmentsQuery;
+
+    if (assignmentsError) {
+      console.error("[checkCrewAvailabilityByType] Error fetching assignments:", assignmentsError);
+    }
+    
+    console.log(`[checkCrewAvailabilityByType] Found ${assignments?.length || 0} assignments for date range ${startDate} to ${endDate}`);
+
+    // Build set of unavailable crew member IDs
+    const unavailableCrewIds = new Set<string>();
+
+    // Check leave status
+    for (const crew of allCrew) {
+      if (crew.on_leave && crew.leave_start_date && crew.leave_end_date) {
+        const leaveStart = new Date(crew.leave_start_date);
+        const leaveEnd = new Date(crew.leave_end_date);
+        leaveEnd.setHours(23, 59, 59, 999);
+
+        if (eventStart <= leaveEnd && eventEnd >= leaveStart) {
+          unavailableCrewIds.add(crew.id);
+        }
+      }
+    }
+
+    // Check overlapping assignments (any role - crew member is busy if assigned to any event)
+    if (assignments) {
+      for (const assignment of assignments) {
+        const event = assignment.events as any;
+        if (!event || !event.start_date || !event.end_date) {
+          console.log(`[checkCrewAvailabilityByType] Skipping assignment - missing event data:`, assignment);
+          continue;
+        }
+
+        const otherStart = new Date(event.start_date);
+        otherStart.setHours(0, 0, 0, 0); // Normalize to start of day
+        const otherEnd = new Date(event.end_date);
+        otherEnd.setHours(23, 59, 59, 999); // Normalize to end of day
+
+        // Check if dates overlap: two date ranges overlap if 
+        // eventStart <= otherEnd AND eventEnd >= otherStart
+        const overlaps = eventStart <= otherEnd && eventEnd >= otherStart;
+        console.log(`[checkCrewAvailabilityByType] Checking assignment: crew=${assignment.crew_member_id}, event=${event.start_date} to ${event.end_date}, requested=${startDate} to ${endDate}, overlaps=${overlaps}`);
+        
+        if (overlaps) {
+          unavailableCrewIds.add(assignment.crew_member_id);
+          console.log(`[checkCrewAvailabilityByType] Marked crew ${assignment.crew_member_id} as unavailable due to overlap`);
+        }
+      }
+    }
+
+    const available = totalCrew - unavailableCrewIds.size;
+    const unavailable = unavailableCrewIds.size;
+
+    console.log(`[checkCrewAvailabilityByType] Results for "${technicianType}": total=${totalCrew}, available=${available}, unavailable=${unavailable}`);
+
+    return { available, total: totalCrew, unavailable };
+  } catch (error) {
+    console.error("[checkCrewAvailabilityByType] Unexpected error:", error);
+    return { available: 0, total: 0, unavailable: 0 };
+  }
+}
+
+/**
  * Get event with all related data
  */
 export async function getEventWithDetails(eventId: string): Promise<{
@@ -407,6 +531,7 @@ export async function getEventWithDetails(eventId: string): Promise<{
   inventory: EventInventory[];
   crew: EventCrew[];
   tasks: EventTask[];
+  roleRequirements: RoleRequirement[];
 }> {
   try {
     const supabase = await createServerSupabaseClient();
@@ -454,10 +579,39 @@ export async function getEventWithDetails(eventId: string): Promise<{
 
     if (eventResult.error) {
       console.error("[getEventWithDetails] Error fetching event:", eventResult.error);
-      return { event: null, inventory: [], crew: [], tasks: [] };
+      return { event: null, inventory: [], crew: [], tasks: [], roleRequirements: [] };
     }
 
     const event = eventResult.data;
+
+    // Derive role requirements from quote labor items
+    let roleRequirements: RoleRequirement[] = [];
+    if (event.quote_id) {
+      const { getQuoteWithItems } = await import("@/lib/quotes");
+      const quote = await getQuoteWithItems(event.quote_id);
+      if (quote) {
+        // Group labor items by technician type and sum days
+        const laborItems = quote.items.filter(
+          (item) => item.item_type === "labor" && item.labor_technician_type
+        );
+        
+        const roleMap = new Map<string, number>();
+        for (const item of laborItems) {
+          const roleName = item.labor_technician_type!;
+          const days = item.labor_days || 0;
+          const existingDays = roleMap.get(roleName) || 0;
+          roleMap.set(roleName, existingDays + days);
+        }
+        
+        // Convert to role requirements (quantity = ceiling of total days)
+        roleRequirements = Array.from(roleMap.entries()).map(
+          ([roleName, totalDays]) => ({
+            role_name: roleName,
+            quantity_required: Math.ceil(totalDays),
+          })
+        );
+      }
+    }
 
     // If event has quote_id but no inventory items, copy from quote
     if (event.quote_id && (!inventoryResult.data || inventoryResult.data.length === 0)) {
@@ -496,6 +650,7 @@ export async function getEventWithDetails(eventId: string): Promise<{
           inventory,
           crew,
           tasks: tasksResult.data || [],
+          roleRequirements,
         };
       }
     }
@@ -517,10 +672,11 @@ export async function getEventWithDetails(eventId: string): Promise<{
       inventory,
       crew,
       tasks: tasksResult.data || [],
+      roleRequirements,
     };
   } catch (error) {
     console.error("[getEventWithDetails] Unexpected error:", error);
-    return { event: null, inventory: [], crew: [], tasks: [] };
+    return { event: null, inventory: [], crew: [], tasks: [], roleRequirements: [] };
   }
 }
 
@@ -1262,3 +1418,6 @@ export async function getEventsForCalendar(
     return [];
   }
 }
+
+// Role requirements are now derived from quote labor items (no separate table)
+// They are computed on-the-fly in getEventWithDetails() from the quote's labor items

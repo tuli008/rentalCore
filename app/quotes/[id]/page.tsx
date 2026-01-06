@@ -4,6 +4,7 @@ import {
   updateQuote,
   deleteQuote,
   addQuoteItem,
+  addQuoteLaborItem,
   updateQuoteItem,
   deleteQuoteItem,
 } from "../../actions/quotes";
@@ -33,6 +34,7 @@ export default async function QuoteDetailPageRoute({
       updateQuote={updateQuote}
       deleteQuote={deleteQuote}
       addQuoteItem={addQuoteItem}
+      addQuoteLaborItem={addQuoteLaborItem}
       updateQuoteItem={updateQuoteItem}
       deleteQuoteItem={deleteQuoteItem}
     />

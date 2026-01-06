@@ -2,40 +2,29 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { Event, EventCrew } from "@/app/actions/events";
-import { addEventCrew, updateEventCrew, deleteEventCrew } from "@/app/actions/events";
+import type { Event, EventCrew, RoleRequirement } from "@/app/actions/events";
+import { 
+  addEventCrew, 
+  updateEventCrew, 
+  deleteEventCrew,
+} from "@/app/actions/events";
 import { sendCrewNotification } from "@/app/actions/notifications";
+import { COMMON_TECHNICIAN_TYPES } from "@/lib/technician-types";
 import CrewSidebar from "./CrewSidebar";
 
 interface EventCrewTabProps {
   event: Event;
   crew: EventCrew[];
+  roleRequirements: RoleRequirement[];
 }
 
-interface RoleRequirement {
-  role: string;
-  needed: number;
-  filled: number;
-}
+const COMMON_ROLES = COMMON_TECHNICIAN_TYPES;
 
-const COMMON_ROLES = [
-  "Sound Tech",
-  "Driver",
-  "Rigger",
-  "Camera Operator",
-  "Lighting Tech",
-  "Stagehand",
-  "Lead",
-  "Assistant",
-  "Technician",
-];
-
-export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
+export default function EventCrewTab({ event, crew, roleRequirements: initialRoleRequirements }: EventCrewTabProps) {
   const router = useRouter();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [roleRequirements, setRoleRequirements] = useState<RoleRequirement[]>([]);
-  const [newRole, setNewRole] = useState("");
-  const [newRoleNeeded, setNewRoleNeeded] = useState("1");
+  // Role requirements are read-only (derived from quote labor items)
+  const roleRequirements = initialRoleRequirements;
   const [editingAssignment, setEditingAssignment] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     role: "",
@@ -48,36 +37,20 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
   const [notificationMessage, setNotificationMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Calculate role requirements from assigned crew
-  useEffect(() => {
-    const roleCounts = new Map<string, number>();
-    crew.forEach((member) => {
-      const count = roleCounts.get(member.role) || 0;
-      roleCounts.set(member.role, count + 1);
-    });
+  // Role requirements are read-only (derived from quote labor items)
 
-    // Convert to requirements array
-    const requirements: RoleRequirement[] = Array.from(roleCounts.entries()).map(
-      ([role, filled]) => ({
-        role,
-        needed: filled, // Default to filled count, user can adjust
-        filled,
-      }),
-    );
+  // Calculate filled counts for each role requirement based on crew assignments
+  const getFilledCount = (roleName: string): number => {
+    return crew.filter((member) => member.role === roleName).length;
+  };
 
-    // Add any requirements that don't have assignments yet
-    roleRequirements.forEach((req) => {
-      if (!roleCounts.has(req.role)) {
-        requirements.push({
-          role: req.role,
-          needed: req.needed,
-          filled: 0,
-        });
-      }
-    });
-
-    setRoleRequirements(requirements);
-  }, [crew]);
+  // Helper to get requirement status
+  const getRequirementStatus = (req: RoleRequirement) => {
+    const filled = getFilledCount(req.role_name);
+    if (filled >= req.quantity_required) return "filled";
+    if (filled > 0) return "partial";
+    return "unfilled";
+  };
 
   const formatDateTime = (dateTimeString: string | null) => {
     if (!dateTimeString) return "—";
@@ -199,39 +172,8 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
     });
   };
 
-  const handleAddRequirement = () => {
-    if (!newRole || !newRoleNeeded) return;
-
-    const needed = parseInt(newRoleNeeded, 10);
-    if (isNaN(needed) || needed < 1) return;
-
-    const existing = roleRequirements.find((r) => r.role === newRole);
-    if (existing) {
-      setRoleRequirements(
-        roleRequirements.map((r) =>
-          r.role === newRole ? { ...r, needed: needed } : r,
-        ),
-      );
-    } else {
-      setRoleRequirements([
-        ...roleRequirements,
-        {
-          role: newRole,
-          needed,
-          filled: crew.filter((c) => c.role === newRole).length,
-        },
-      ]);
-    }
-
-    setNewRole("");
-    setNewRoleNeeded("1");
-  };
-
-  const getRequirementStatus = (req: RoleRequirement) => {
-    if (req.filled >= req.needed) return "filled";
-    if (req.filled > 0) return "partial";
-    return "unfilled";
-  };
+  // Role requirements are read-only (derived from quote labor items)
+  // Cannot add/edit/delete them here - must be done in the quote
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -268,98 +210,43 @@ export default function EventCrewTab({ event, crew }: EventCrewTabProps) {
           <h2 className="text-lg font-semibold text-gray-900">Role Requirements</h2>
         </div>
 
-        {/* Add Requirement */}
-        <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <div className="flex gap-2 mb-2">
-            <select
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value)}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select role...</option>
-              {COMMON_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {role}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min="1"
-              value={newRoleNeeded}
-              onChange={(e) => setNewRoleNeeded(e.target.value)}
-              placeholder="Needed"
-              className="w-24 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              onClick={handleAddRequirement}
-              disabled={!newRole || !newRoleNeeded}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              Add
-            </button>
-          </div>
-          <input
-            type="text"
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-            placeholder="Or enter custom role"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
 
         {/* Requirements List */}
         {roleRequirements.length > 0 && (
           <div className="space-y-2">
-            {roleRequirements.map((req) => {
-              const status = getRequirementStatus(req);
-              return (
-                <div
-                  key={req.role}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
-                >
-                  <div className="flex items-center gap-3">
-                    {getStatusIcon(status)}
-                    <div>
-                      <div className="font-medium text-gray-900">{req.role}</div>
-                      <div className="text-sm text-gray-500">
-                        {req.filled} / {req.needed} assigned
+            {roleRequirements.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                {event.quote_id ? (
+                  <p>No role requirements from quote. Add labor items to the quote to see requirements here.</p>
+                ) : (
+                  <p>No role requirements. Role requirements are derived from labor items in the quote.</p>
+                )}
+              </div>
+            ) : (
+              roleRequirements.map((req, index) => {
+                const filled = getFilledCount(req.role_name);
+                const status = getRequirementStatus(req);
+                return (
+                  <div
+                    key={`${req.role_name}-${index}`}
+                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
+                  >
+                    <div className="flex items-center gap-3">
+                      {getStatusIcon(status)}
+                      <div>
+                        <div className="font-medium text-gray-900">{req.role_name}</div>
+                        <div className="text-sm text-gray-500">
+                          {filled} / {req.quantity_required} assigned
+                        </div>
                       </div>
                     </div>
+                    <div className="text-sm text-gray-500">
+                      Required
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      value={req.needed}
-                      onChange={(e) => {
-                        const needed = parseInt(e.target.value, 10);
-                        if (!isNaN(needed) && needed >= 0) {
-                          setRoleRequirements(
-                            roleRequirements.map((r) =>
-                              r.role === req.role ? { ...r, needed } : r,
-                            ),
-                          );
-                        }
-                      }}
-                      className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={() => {
-                        setRoleRequirements(
-                          roleRequirements.filter((r) => r.role !== req.role),
-                        );
-                      }}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         )}
       </div>

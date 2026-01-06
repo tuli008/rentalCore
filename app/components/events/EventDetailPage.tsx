@@ -8,6 +8,7 @@ import type {
   EventInventory,
   EventCrew,
   EventTask,
+  RoleRequirement,
 } from "@/app/actions/events";
 import EventSummaryTab from "./EventSummaryTab";
 import EventInventoryTab from "./EventInventoryTab";
@@ -20,6 +21,7 @@ interface EventDetailPageProps {
   inventory: EventInventory[];
   crew: EventCrew[];
   tasks: EventTask[];
+  roleRequirements: RoleRequirement[];
   updateEvent: (
     formData: FormData,
   ) => Promise<{ error?: string; success?: boolean }>;
@@ -35,6 +37,7 @@ export default function EventDetailPage({
   inventory,
   crew,
   tasks,
+  roleRequirements,
   updateEvent,
   deleteEvent,
 }: EventDetailPageProps) {
@@ -193,7 +196,7 @@ export default function EventDetailPage({
           />
         )}
         {activeTab === "crew" && (
-          <EventCrewTab event={event} crew={crew} />
+          <EventCrewTab event={event} crew={crew} roleRequirements={roleRequirements} />
         )}
         {activeTab === "timeline" && (
           <EventTimelineTab

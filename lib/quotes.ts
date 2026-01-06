@@ -12,10 +12,15 @@ export interface Quote {
 export interface QuoteItem {
   id: string;
   quote_id: string;
-  item_id: string;
+  item_id: string | null; // Nullable for labor items
   quantity: number;
   unit_price_snapshot: number;
-  // Joined data
+  item_type: "inventory" | "labor"; // Type discriminator
+  // Labor-specific fields (when item_type = 'labor')
+  labor_technician_type?: string | null;
+  labor_days?: number | null;
+  labor_rate_per_day?: number | null;
+  // Joined data (for inventory items)
   item_name?: string;
   item_price?: number;
   item_is_serialized?: boolean;
@@ -92,7 +97,7 @@ export async function getQuoteWithItems(
     return null;
   }
 
-  // Fetch quote items with item details
+  // Fetch quote items with item details (both inventory and labor)
   const { data: quoteItems, error: itemsError } = await supabase
     .from("quote_items")
     .select(
@@ -102,6 +107,10 @@ export async function getQuoteWithItems(
       item_id,
       quantity,
       unit_price_snapshot,
+      item_type,
+      labor_technician_type,
+      labor_days,
+      labor_rate_per_day,
       inventory_items:item_id (
         name,
         price,
@@ -124,7 +133,12 @@ export async function getQuoteWithItems(
       item_id: qi.item_id,
       quantity: qi.quantity,
       unit_price_snapshot: qi.unit_price_snapshot,
-      item_name: qi.inventory_items?.name,
+      item_type: qi.item_type || "inventory", // Default to inventory for backwards compatibility
+      labor_technician_type: qi.labor_technician_type,
+      labor_days: qi.labor_days ? parseFloat(qi.labor_days) : null,
+      labor_rate_per_day: qi.labor_rate_per_day ? parseFloat(qi.labor_rate_per_day) : null,
+      // Joined data (only for inventory items)
+      item_name: qi.item_type === "labor" ? qi.labor_technician_type : qi.inventory_items?.name,
       item_price: qi.inventory_items?.price,
       item_is_serialized: qi.inventory_items?.is_serialized,
     })) || [];

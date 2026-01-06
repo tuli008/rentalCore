@@ -280,12 +280,13 @@ export async function addQuoteItem(formData: FormData) {
     };
   }
 
-  // Insert quote item with price snapshot
+  // Insert quote item with price snapshot (explicitly set item_type for inventory)
   const { error } = await supabase.from("quote_items").insert({
     quote_id: quoteId,
     item_id: itemId,
     quantity,
     unit_price_snapshot: priceToUse,
+    item_type: "inventory", // Explicitly set for inventory items
   });
 
   if (error) {
@@ -301,6 +302,104 @@ export async function addQuoteItem(formData: FormData) {
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${quoteId}`);
   return { success: true };
+}
+
+/**
+ * Add labor item to quote
+ */
+export async function addQuoteLaborItem(formData: FormData): Promise<{
+  success?: boolean;
+  error?: string;
+  warning?: string;
+  availability?: {
+    available: number;
+    total: number;
+    unavailable: number;
+  };
+}> {
+  const quoteId = String(formData.get("quote_id") || "");
+  const technicianType = String(formData.get("technician_type") || "").trim();
+  const days = parseFloat(String(formData.get("days") || "0"));
+  const ratePerDay = parseFloat(String(formData.get("rate_per_day") || "0"));
+  const startDate = String(formData.get("start_date") || "");
+  const endDate = String(formData.get("end_date") || "");
+
+  if (!quoteId || !technicianType || isNaN(days) || days <= 0 || isNaN(ratePerDay) || ratePerDay < 0) {
+    return { error: "Quote ID, technician type, days, and rate per day are required" };
+  }
+
+  // Check crew availability if dates are provided
+  let availabilityWarning: string | undefined;
+  let availabilityInfo: { available: number; total: number; unavailable: number } | undefined;
+  
+  if (startDate && endDate) {
+    try {
+      const { checkCrewAvailabilityByType } = await import("@/app/actions/events");
+      const requiredPeople = Math.ceil(days);
+      const availability = await checkCrewAvailabilityByType(
+        technicianType,
+        startDate,
+        endDate,
+      );
+
+      if (availability.total === 0) {
+        return {
+          error: `No ${technicianType} crew members found in the system. Please add crew members first.`,
+          availability,
+        };
+      }
+
+      if (availability.available < requiredPeople) {
+        const errorMessage = availability.available === 0
+          ? `Cannot add: All ${availability.total} ${technicianType}${availability.total === 1 ? '' : 's'} ${availability.total === 1 ? 'is' : 'are'} already assigned or on leave for these dates (${startDate} to ${endDate}). Please assign crew members to the event or adjust dates.`
+          : `Cannot add: Only ${availability.available} of ${availability.total} ${technicianType}${availability.total === 1 ? '' : 's'} available. You need ${requiredPeople} for ${days} day${days !== 1 ? 's' : ''}. Please assign more crew members or adjust dates.`;
+        
+        // Block adding - return error instead of warning
+        return {
+          error: errorMessage,
+          availability,
+        };
+      }
+    } catch (error) {
+      console.error("[addQuoteLaborItem] Error checking availability:", error);
+      // Don't block adding if check fails, but log it
+    }
+  }
+
+  try {
+    const { error } = await supabase.from("quote_items").insert({
+      quote_id: quoteId,
+      item_id: null, // Labor items don't reference inventory_items
+      quantity: days, // Use quantity field for days
+      unit_price_snapshot: ratePerDay, // Rate per day
+      item_type: "labor",
+      labor_technician_type: technicianType,
+      labor_days: days,
+      labor_rate_per_day: ratePerDay,
+    });
+
+    if (error) {
+      console.error("[addQuoteLaborItem] Error adding labor item:", {
+        action: "addQuoteLaborItem",
+        quote_id: quoteId,
+        error: error.message,
+      });
+      return { error: "Failed to add labor item to quote" };
+    }
+
+    revalidatePath("/quotes");
+    revalidatePath(`/quotes/${quoteId}`);
+    
+    // Return success with warning if available
+    return {
+      success: true,
+      warning: availabilityWarning,
+      availability: availabilityInfo,
+    };
+  } catch (error) {
+    console.error("[addQuoteLaborItem] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
 }
 
 export async function updateQuoteItem(formData: FormData) {
@@ -1253,7 +1352,9 @@ export async function refreshQuoteItemPrices(itemId: string) {
 }
 
 export async function confirmQuotation(formData: FormData) {
+  console.log(`[confirmQuotation] ========== FUNCTION CALLED ==========`);
   const quoteId = String(formData.get("quote_id"));
+  console.log(`[confirmQuotation] Quote ID: ${quoteId}`);
 
   if (!quoteId) {
     return { ok: false, error: "Quote ID is required." };
@@ -1275,10 +1376,14 @@ export async function confirmQuotation(formData: FormData) {
     return { ok: false, error: "Cannot confirm a quote with no items." };
   }
 
-  // Check availability for all items before confirming
+  // Check availability for inventory items only (labor items don't have availability)
+  const inventoryItems = quote.items.filter(item => item.item_id && (!item.item_type || item.item_type === "inventory"));
+  
   const { getItemAvailabilityBreakdown } = await import("@/lib/quotes");
   const availabilityChecks = await Promise.all(
-    quote.items.map(async (item) => {
+    inventoryItems.map(async (item) => {
+      if (!item.item_id) return null; // Skip if no item_id (shouldn't happen after filter, but safety check)
+      
       const breakdown = await getItemAvailabilityBreakdown(item.item_id, {
         quoteId: quote.id,
         startDate: quote.start_date,
@@ -1293,9 +1398,12 @@ export async function confirmQuotation(formData: FormData) {
       };
     }),
   );
+  
+  // Filter out null values (shouldn't happen, but safety check)
+  const validAvailabilityChecks = availabilityChecks.filter((check): check is NonNullable<typeof check> => check !== null);
 
   // Check if all items have sufficient availability
-  const insufficientItems = availabilityChecks.filter(
+  const insufficientItems = validAvailabilityChecks.filter(
     (check) => check.required > check.available,
   );
 
@@ -1305,6 +1413,86 @@ export async function confirmQuotation(formData: FormData) {
       ok: false,
       error: `Insufficient availability for: ${itemNames}`,
     };
+  }
+
+  // Check crew availability for labor items (technician types)
+  const laborItems = quote.items.filter(item => item.item_type === "labor" && item.labor_technician_type);
+  
+  console.log(`[confirmQuotation] ========== CREW AVAILABILITY CHECK ==========`);
+  console.log(`[confirmQuotation] Total quote items: ${quote.items.length}`);
+  console.log(`[confirmQuotation] Labor items found: ${laborItems.length}`);
+  console.log(`[confirmQuotation] All items:`, quote.items.map(item => ({ 
+    id: item.id, 
+    type: item.item_type, 
+    technician_type: item.labor_technician_type 
+  })));
+  
+  if (laborItems.length > 0) {
+    try {
+      const { checkCrewAvailabilityByType } = await import("@/app/actions/events");
+      
+      // Group labor items by technician type and sum required days
+      const technicianRequirements = new Map<string, number>();
+      for (const item of laborItems) {
+        if (item.labor_technician_type) {
+          const days = item.labor_days || item.quantity || 0;
+          const existing = technicianRequirements.get(item.labor_technician_type) || 0;
+          technicianRequirements.set(item.labor_technician_type, existing + days);
+          console.log(`[confirmQuotation] Labor item: ${item.labor_technician_type}, ${days} days`);
+        }
+      }
+
+      console.log(`[confirmQuotation] Checking availability for ${technicianRequirements.size} technician types`);
+      console.log(`[confirmQuotation] Quote dates: ${quote.start_date} to ${quote.end_date}`);
+
+      // Check availability for each technician type
+      const insufficientCrew: string[] = [];
+      for (const [technicianType, requiredDays] of technicianRequirements.entries()) {
+        // Round up to get number of people needed (e.g., 2.5 days = 3 people)
+        const requiredPeople = Math.ceil(requiredDays);
+        
+        console.log(`[confirmQuotation] Checking availability for "${technicianType}": need ${requiredPeople} people`);
+        
+        const availability = await checkCrewAvailabilityByType(
+          technicianType,
+          quote.start_date,
+          quote.end_date,
+        );
+
+        console.log(`[confirmQuotation] Availability result for "${technicianType}":`, availability);
+
+        if (availability.available < requiredPeople) {
+          const message = availability.total === 0
+            ? `${technicianType}: No ${technicianType} crew members found in the system`
+            : availability.available === 0
+            ? `${technicianType}: Need ${requiredPeople}, but all ${availability.total} ${technicianType}${availability.total === 1 ? '' : 's'} ${availability.total === 1 ? 'is' : 'are'} already assigned or on leave`
+            : `${technicianType}: Need ${requiredPeople}, but only ${availability.available} available (${availability.unavailable} already assigned/on leave)`;
+          insufficientCrew.push(message);
+          console.log(`[confirmQuotation] Insufficient crew: ${message}`);
+        } else {
+          console.log(`[confirmQuotation] Sufficient crew available for "${technicianType}"`);
+        }
+      }
+
+      if (insufficientCrew.length > 0) {
+        console.log(`[confirmQuotation] Blocking confirmation due to insufficient crew`);
+        return {
+          ok: false,
+          error: `Insufficient crew availability: ${insufficientCrew.join("; ")}`,
+        };
+      }
+      console.log(`[confirmQuotation] All crew availability checks passed`);
+    } catch (error) {
+      console.error(`[confirmQuotation] ERROR checking crew availability:`, error);
+      // Block confirmation if there's an error checking availability
+      // This ensures we don't confirm quotes when we can't verify crew availability
+      return {
+        ok: false,
+        error: `Error checking crew availability: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  } else {
+    console.log(`[confirmQuotation] No labor items found, skipping crew availability check`);
   }
 
   // Update quote status to "accepted"
@@ -1342,9 +1530,11 @@ export async function confirmQuotation(formData: FormData) {
     }
   }
 
-  // Reduce inventory availability for each item
-  for (const item of quote.items) {
-    const check = availabilityChecks.find((c) => c.itemId === item.item_id);
+  // Reduce inventory availability for each inventory item only (not labor items)
+  for (const item of inventoryItems) {
+    if (!item.item_id) continue; // Skip labor items
+    
+    const check = validAvailabilityChecks.find((c) => c.itemId === item.item_id);
     if (!check) continue;
 
     if (check.isSerialized) {

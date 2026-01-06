@@ -6,6 +6,7 @@ import {
   getAllInventoryItemsForQuote,
 } from "@/app/actions/quotes";
 import type { QuoteItem } from "@/lib/quotes";
+import { COMMON_TECHNICIAN_TYPES } from "@/lib/technician-types";
 import DraggableItemCard from "./DraggableItemCard";
 
 interface InventoryItem {
@@ -29,6 +30,11 @@ interface QuoteSidebarProps {
     unitPrice: number,
     quantity: number,
   ) => void;
+  onAddLabor?: (
+    technicianType: string,
+    days: number,
+    ratePerDay: number,
+  ) => void;
   existingQuoteItems: QuoteItem[];
   quoteContext?: {
     quoteId: string;
@@ -47,6 +53,7 @@ interface QuoteSidebarProps {
 
 export default function QuoteSidebar({
   onAddItem,
+  onAddLabor,
   existingQuoteItems,
   quoteContext,
   quoteSummary,
@@ -54,7 +61,7 @@ export default function QuoteSidebar({
   variant = "desktop",
   onClose,
 }: QuoteSidebarProps) {
-  const [activeTab, setActiveTab] = useState<"summary" | "search" | "quick">(
+  const [activeTab, setActiveTab] = useState<"summary" | "search" | "quick" | "labor">(
     "search",
   );
   const [searchQuery, setSearchQuery] = useState("");
@@ -70,6 +77,12 @@ export default function QuoteSidebar({
   const [quickAddPrice, setQuickAddPrice] = useState("0");
   const [quickAddResults, setQuickAddResults] = useState<InventoryItem[]>([]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Labor form state
+  const [laborTechnicianType, setLaborTechnicianType] = useState("");
+  const [laborDays, setLaborDays] = useState("1");
+  const [laborRatePerDay, setLaborRatePerDay] = useState("");
+  const [isAddingLabor, setIsAddingLabor] = useState(false);
 
   // Create a map of item_id -> quantity already in quote
   const itemsInQuote = useMemo(() => {
@@ -371,6 +384,16 @@ export default function QuoteSidebar({
         >
           Quick Add
         </button>
+        <button
+          onClick={() => setActiveTab("labor")}
+          className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+            activeTab === "labor"
+              ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
+              : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+          }`}
+        >
+          Labor
+        </button>
       </div>
 
       {/* Tab Content */}
@@ -493,6 +516,130 @@ export default function QuoteSidebar({
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === "labor" && (
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                Add Labor Item
+              </h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Add technician labor costs to this quote
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Technician Type *
+              </label>
+              <select
+                value={laborTechnicianType}
+                onChange={(e) => setLaborTechnicianType(e.target.value)}
+                className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              >
+                <option value="">Select technician type...</option>
+                {COMMON_TECHNICIAN_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={laborTechnicianType}
+                onChange={(e) => setLaborTechnicianType(e.target.value)}
+                placeholder="Or enter custom type"
+                className="w-full mt-2 px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Days *
+              </label>
+              <input
+                type="number"
+                min="0.5"
+                step="0.5"
+                value={laborDays}
+                onChange={(e) => setLaborDays(e.target.value)}
+                placeholder="e.g., 2.5"
+                className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Rate per Day ($) *
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={laborRatePerDay}
+                onChange={(e) => setLaborRatePerDay(e.target.value)}
+                placeholder="e.g., 500.00"
+                className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
+            </div>
+
+            {laborTechnicianType && laborDays && laborRatePerDay && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
+                <p className="text-xs text-gray-600 mb-1">
+                  <span className="font-medium">{laborTechnicianType}</span>
+                </p>
+                <p className="text-xs text-gray-500">
+                  {laborDays} day{parseFloat(laborDays) !== 1 ? "s" : ""} × ${parseFloat(laborRatePerDay || "0").toFixed(2)}/day = ${(parseFloat(laborDays || "0") * parseFloat(laborRatePerDay || "0")).toFixed(2)}
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                if (!onAddLabor || !laborTechnicianType || !laborDays || !laborRatePerDay) return;
+                
+                const days = parseFloat(laborDays);
+                const rate = parseFloat(laborRatePerDay);
+                
+                if (isNaN(days) || days <= 0) {
+                  alert("Please enter a valid number of days");
+                  return;
+                }
+                
+                if (isNaN(rate) || rate < 0) {
+                  alert("Please enter a valid rate per day");
+                  return;
+                }
+                
+                setIsAddingLabor(true);
+                try {
+                  await onAddLabor(laborTechnicianType, days, rate);
+                  // Reset form
+                  setLaborTechnicianType("");
+                  setLaborDays("1");
+                  setLaborRatePerDay("");
+                } catch (error) {
+                  console.error("Error adding labor:", error);
+                  alert("Failed to add labor item. Please try again.");
+                } finally {
+                  setIsAddingLabor(false);
+                }
+              }}
+              disabled={
+                isReadOnly ||
+                isAddingLabor ||
+                !laborTechnicianType ||
+                !laborDays ||
+                !laborRatePerDay ||
+                parseFloat(laborDays) <= 0 ||
+                parseFloat(laborRatePerDay) < 0
+              }
+              className="w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAddingLabor ? "Adding..." : "ADD LABOR"}
+            </button>
           </div>
         )}
 

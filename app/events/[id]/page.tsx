@@ -15,7 +15,7 @@ export default async function EventDetailPageRoute({
       notFound();
     }
 
-    const { event, inventory, crew, tasks } = await getEventWithDetails(eventId);
+    const { event, inventory, crew, tasks, roleRequirements } = await getEventWithDetails(eventId);
 
     if (!event) {
       notFound();
@@ -27,6 +27,7 @@ export default async function EventDetailPageRoute({
         inventory={inventory}
         crew={crew}
         tasks={tasks}
+        roleRequirements={roleRequirements}
         updateEvent={updateEvent}
         deleteEvent={deleteEvent}
       />
