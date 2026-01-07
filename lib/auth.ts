@@ -74,14 +74,6 @@ export async function getCurrentUserRole(): Promise<"admin" | "user"> {
     return (user.user_metadata?.role as "admin" | "user") || "user";
   }
 
-  console.log("[getCurrentUserRole] Found user in database:", {
-    email: user.email,
-    userEmail,
-    dbEmail: userData.email,
-    role: userData.role,
-    roleMatch: userData.role === "admin" ? "admin" : "user",
-  });
-
   const finalRole = userData.role === "admin" ? "admin" : "user";
   return finalRole;
 }

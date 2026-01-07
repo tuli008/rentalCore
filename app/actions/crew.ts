@@ -13,6 +13,9 @@ export interface CrewMember {
   contact: string | null;
   role: "Own Crew" | "Freelancer";
   technician_type: string | null; // Primary technician specialty (e.g., "Lighting Technician")
+  google_calendar_refresh_token: string | null; // OAuth refresh token for Google Calendar sync (encrypted)
+  google_calendar_token_expiry: string | null; // Access token expiry timestamp
+  google_calendar_connected: boolean; // Connection status flag
   on_leave: boolean;
   leave_start_date: string | null;
   leave_end_date: string | null;
@@ -377,6 +380,51 @@ export async function deleteCrewMember(formData: FormData): Promise<{
     return { success: true };
   } catch (error) {
     console.error("[deleteCrewMember] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
+ * Disconnect Google Calendar for a crew member
+ */
+export async function disconnectGoogleCalendar(formData: FormData): Promise<{
+  success?: boolean;
+  error?: string;
+}> {
+  // Require admin access
+  try {
+    await requireAdmin();
+  } catch (error) {
+    return { error: "Unauthorized: Admin access required" };
+  }
+
+  const id = String(formData.get("id") || "");
+
+  if (!id) {
+    return { error: "Crew member ID is required" };
+  }
+
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { error: updateError } = await supabase
+      .from("crew_members")
+      .update({
+        google_calendar_refresh_token: null,
+        google_calendar_token_expiry: null,
+        google_calendar_connected: false,
+      })
+      .eq("id", id)
+      .eq("tenant_id", tenantId);
+
+    if (updateError) {
+      console.error("[disconnectGoogleCalendar] Error:", updateError);
+      return { error: "Failed to disconnect Google Calendar" };
+    }
+
+    revalidatePath("/crew");
+    return { success: true };
+  } catch (error) {
+    console.error("[disconnectGoogleCalendar] Unexpected error:", error);
     return { error: "An unexpected error occurred" };
   }
 }

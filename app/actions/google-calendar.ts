@@ -34,7 +34,9 @@ export async function syncCrewAssignmentToGoogleCalendar(
           id,
           name,
           email,
-          google_calendar_refresh_token
+          google_calendar_refresh_token,
+          google_calendar_token_expiry,
+          google_calendar_connected
         ),
         events:event_id (
           id,
@@ -49,7 +51,20 @@ export async function syncCrewAssignmentToGoogleCalendar(
       .eq("tenant_id", tenantId)
       .single();
 
-    if (assignmentError || !assignment) {
+    if (assignmentError) {
+      console.error("[syncCrewAssignmentToGoogleCalendar] Database error:", {
+        error: assignmentError,
+        eventCrewId,
+        tenantId,
+      });
+      return { success: false, error: `Crew assignment not found: ${assignmentError.message}` };
+    }
+
+    if (!assignment) {
+      console.error("[syncCrewAssignmentToGoogleCalendar] Assignment not found:", {
+        eventCrewId,
+        tenantId,
+      });
       return { success: false, error: "Crew assignment not found" };
     }
 
@@ -61,7 +76,7 @@ export async function syncCrewAssignmentToGoogleCalendar(
     }
 
     // Check if crew member has Google Calendar connected
-    if (!crewMember.google_calendar_refresh_token) {
+    if (!crewMember.google_calendar_refresh_token || !crewMember.google_calendar_connected) {
       // Not an error - just not connected
       return { success: true };
     }
@@ -104,9 +119,21 @@ Assigned via Rental Core.
     if (assignment.google_event_id) {
       const updateResult = await updateGoogleCalendarEvent(
         crewMember.google_calendar_refresh_token,
+        crewMember.google_calendar_token_expiry,
         assignment.google_event_id,
         calendarEvent
       );
+
+      if (updateResult.tokenInvalid) {
+        // Token is invalid - mark as disconnected
+        await supabase
+          .from("crew_members")
+          .update({ google_calendar_connected: false })
+          .eq("id", crewMember.id)
+          .eq("tenant_id", tenantId);
+        
+        return { success: false, error: "Google Calendar connection expired. Please reconnect." };
+      }
 
       if (updateResult.success) {
         return { success: true, eventId: assignment.google_event_id };
@@ -121,8 +148,20 @@ Assigned via Rental Core.
     // Create new calendar event
     const createResult = await createGoogleCalendarEvent(
       crewMember.google_calendar_refresh_token,
+      crewMember.google_calendar_token_expiry,
       calendarEvent
     );
+
+    if (createResult.tokenInvalid) {
+      // Token is invalid - mark as disconnected
+      await supabase
+        .from("crew_members")
+        .update({ google_calendar_connected: false })
+        .eq("id", crewMember.id)
+        .eq("tenant_id", tenantId);
+      
+      return { success: false, error: "Google Calendar connection expired. Please reconnect." };
+    }
 
     if (createResult.eventId) {
       // Update the event_crew record with the google_event_id
@@ -131,6 +170,9 @@ Assigned via Rental Core.
         .update({ google_event_id: createResult.eventId })
         .eq("id", eventCrewId)
         .eq("tenant_id", tenantId);
+
+      // Update token expiry if we got a new expiry time (from token refresh)
+      // Note: We'd need to store the new expiry, but for now we'll rely on refresh
 
       return { success: true, eventId: createResult.eventId };
     } else {
@@ -162,7 +204,8 @@ export async function removeCrewAssignmentFromGoogleCalendar(
         id,
         google_event_id,
         crew_members:crew_member_id (
-          google_calendar_refresh_token
+          google_calendar_refresh_token,
+          google_calendar_token_expiry
         )
       `
       )
@@ -193,6 +236,7 @@ export async function removeCrewAssignmentFromGoogleCalendar(
     // Delete the calendar event
     const deleteResult = await deleteGoogleCalendarEvent(
       crewMember.google_calendar_refresh_token,
+      crewMember.google_calendar_token_expiry,
       assignment.google_event_id
     );
 

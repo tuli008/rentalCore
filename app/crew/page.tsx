@@ -1,6 +1,6 @@
 import { getCrewMembers } from "@/app/actions/crew";
 import CrewMembersPage from "../components/crew/CrewMembersPage";
-import { createCrewMember, updateCrewMember, deleteCrewMember, updateCrewLeaveStatus } from "../actions/crew";
+import { createCrewMember, updateCrewMember, deleteCrewMember, updateCrewLeaveStatus, disconnectGoogleCalendar } from "../actions/crew";
 import { checkIsAdmin } from "@/lib/auth";
 
 export default async function CrewPage() {
@@ -14,6 +14,7 @@ export default async function CrewPage() {
       updateCrewMember={updateCrewMember}
       deleteCrewMember={deleteCrewMember}
       updateCrewLeaveStatus={updateCrewLeaveStatus}
+      disconnectGoogleCalendar={disconnectGoogleCalendar}
       isAdmin={isAdmin}
     />
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { CrewMember } from "@/app/actions/crew";
 import { isAdminClient } from "@/lib/auth-client";
 import { COMMON_TECHNICIAN_TYPES } from "@/lib/technician-types";
@@ -24,6 +24,10 @@ interface CrewMembersPageProps {
     success?: boolean;
     error?: string;
   }>;
+  disconnectGoogleCalendar: (formData: FormData) => Promise<{
+    success?: boolean;
+    error?: string;
+  }>;
   isAdmin?: boolean;
 }
 
@@ -33,9 +37,11 @@ export default function CrewMembersPage({
   updateCrewMember,
   deleteCrewMember,
   updateCrewLeaveStatus,
+  disconnectGoogleCalendar,
   isAdmin: isAdminProp,
 }: CrewMembersPageProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [crewMembers, setCrewMembers] = useState(initialCrewMembers);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -58,6 +64,40 @@ export default function CrewMembersPage({
     role: "Own Crew" as "Own Crew" | "Freelancer",
     technician_type: "",
   });
+
+  // Show success/error messages from URL params (OAuth callback)
+  useEffect(() => {
+    const success = searchParams.get("success");
+    const error = searchParams.get("error");
+    
+    if (success === "calendar_connected") {
+      setSuccess("Google Calendar connected successfully!");
+      router.replace("/crew"); // Clear URL params
+      startTransition(() => {
+        router.refresh();
+      });
+    } else if (error) {
+      const errorMessages: Record<string, string> = {
+        oauth_cancelled: "Google Calendar connection was cancelled",
+        no_code: "Failed to receive authorization code",
+        no_crew_id: "Crew member not found",
+        not_configured: "Google Calendar integration not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment variables. See docs/GOOGLE_CALENDAR_SETUP.md for setup instructions.",
+        token_exchange_failed: "Failed to exchange authorization code",
+        no_refresh_token: "Failed to receive refresh token",
+        save_failed: "Failed to save calendar connection",
+        unexpected_error: "An unexpected error occurred",
+      };
+      
+      // Check for custom message from URL
+      const message = searchParams.get("message");
+      if (message) {
+        setError(decodeURIComponent(message));
+      } else {
+        setError(errorMessages[error] || "Failed to connect Google Calendar");
+      }
+      router.replace("/crew"); // Clear URL params
+    }
+  }, [searchParams, router]);
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
@@ -615,7 +655,53 @@ export default function CrewMembersPage({
                       </td>
                       {isAdmin && (
                         <td className="py-3 px-4">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-2 flex-wrap">
+                            {/* Google Calendar Connection */}
+                            {/* Check if connected - use refresh token as primary indicator */}
+                            {member.google_calendar_refresh_token ? (
+                              <button
+                                onClick={async () => {
+                                  if (confirm(`Disconnect Google Calendar for ${member.name}?`)) {
+                                    const formData = new FormData();
+                                    formData.append("id", member.id);
+                                    const result = await disconnectGoogleCalendar(formData);
+                                    if (result.error) {
+                                      setError(result.error);
+                                    } else {
+                                      setSuccess("Google Calendar disconnected");
+                                      startTransition(() => {
+                                        router.refresh();
+                                      });
+                                    }
+                                  }
+                                }}
+                                className="px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors flex items-center gap-1.5 border border-green-300"
+                                title="Google Calendar connected - Click to disconnect"
+                              >
+                                <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                </svg>
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/>
+                                </svg>
+                                <span className="hidden sm:inline">Calendar</span>
+                              </button>
+                            ) : (
+                              <a
+                                href={`/api/google-calendar/auth?crew_member_id=${encodeURIComponent(member.id)}`}
+                                onClick={(e) => {
+                                  console.log("[CrewMembersPage] Connect Calendar clicked for:", member.name, member.id);
+                                  // Don't prevent default - let the link work normally
+                                }}
+                                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors border border-gray-300 flex items-center gap-1 cursor-pointer no-underline inline-block"
+                                title="Connect Google Calendar"
+                              >
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/>
+                                </svg>
+                                <span className="hidden sm:inline">Connect Calendar</span>
+                              </a>
+                            )}
                             <button
                               onClick={() => handleEditLeave(member)}
                               className="px-3 py-1.5 text-sm text-orange-600 hover:text-orange-700 hover:bg-orange-50 rounded-md transition-colors"

@@ -1,0 +1,11 @@
+# Add these lines to your .env.local file
+
+# Google OAuth Credentials (add these lines at the end of your .env.local)
+GOOGLE_CLIENT_ID=your-client-id-here.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret-here
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/google-calendar/callback
+GOOGLE_CALENDAR_ENCRYPTION_KEY=your-generated-encryption-key-here
+
+# Note: NEXT_PUBLIC_APP_URL should already be there, but if not, add:
+# NEXT_PUBLIC_APP_URL=http://localhost:3000
+
