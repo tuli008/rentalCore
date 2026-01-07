@@ -86,3 +86,4 @@ GOOGLE_CALENDAR_ENCRYPTION_KEY=a8F3kP9QmR2Zx7YcLwD6VJtE5HnB4Uq
 - ✅ Add your email as a test user
 - ✅ Restart server after updating `.env.local`
 
+

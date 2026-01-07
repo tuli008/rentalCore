@@ -3,6 +3,8 @@
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { syncCrewAssignmentToGoogleCalendar } from "./google-calendar";
 
+export type RateType = "hourly" | "daily" | "weekly" | "monthly";
+
 export interface CrewAssignmentNotification {
   crewMemberId: string;
   crewMemberName: string;
@@ -15,7 +17,8 @@ export interface CrewAssignmentNotification {
   role: string;
   callTime: string | null;
   endTime: string | null;
-  hourlyRate: number | null;
+  rate: number | null;
+  rateType: RateType | null;
 }
 
 /**
@@ -57,9 +60,11 @@ export async function notifyCrewAssignment(
         })
       : "TBD";
 
-    const rateStr = notification.hourlyRate
-      ? `$${notification.hourlyRate.toFixed(2)}/hr`
-      : "TBD";
+    const { formatRate } = await import("@/lib/rate-calculations");
+    const rateStr =
+      notification.rate && notification.rateType
+        ? formatRate(notification.rate, notification.rateType)
+        : "TBD";
 
     // Prepare email content
     const emailSubject = `Event Assignment: ${notification.eventName}`;
@@ -261,7 +266,8 @@ export async function sendCrewNotification(
         role,
         call_time,
         end_time,
-        hourly_rate,
+        rate,
+        rate_type,
         crew_member_id,
         event_id,
         crew_members:crew_member_id (
@@ -314,7 +320,8 @@ export async function sendCrewNotification(
       role: assignment.role,
       callTime: assignment.call_time,
       endTime: assignment.end_time,
-      hourlyRate: assignment.hourly_rate,
+      rate: assignment.rate,
+      rateType: assignment.rate_type,
     });
 
     // Also sync to Google Calendar if crew member has connected their calendar

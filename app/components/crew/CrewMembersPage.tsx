@@ -63,6 +63,8 @@ export default function CrewMembersPage({
     contact: "",
     role: "Own Crew" as "Own Crew" | "Freelancer",
     technician_type: "",
+    rate_type: "" as "" | "hourly" | "daily" | "weekly" | "monthly",
+    base_rate: "",
   });
 
   // Show success/error messages from URL params (OAuth callback)
@@ -161,6 +163,8 @@ export default function CrewMembersPage({
       contact: "",
       role: "Own Crew",
       technician_type: "",
+      rate_type: "",
+      base_rate: "",
     });
     setError(null);
     setSuccess(null);
@@ -173,6 +177,8 @@ export default function CrewMembersPage({
       contact: member.contact || "",
       role: member.role,
       technician_type: member.technician_type || "",
+      rate_type: member.rate_type || "",
+      base_rate: member.base_rate?.toString() || "",
     });
     setEditingId(member.id);
     setShowAddForm(true);
@@ -392,6 +398,58 @@ export default function CrewMembersPage({
                       </option>
                     ))}
                   </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="rate_type"
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Rate Type
+                  </label>
+                  <select
+                    id="rate_type"
+                    name="rate_type"
+                    value={formData.rate_type}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">No Rate</option>
+                    <option value="hourly">Hourly</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="base_rate"
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Base Rate {formData.rate_type && <span className="text-red-500">*</span>}
+                  </label>
+                  <input
+                    type="number"
+                    id="base_rate"
+                    name="base_rate"
+                    value={formData.base_rate}
+                    onChange={handleInputChange}
+                    step="0.01"
+                    min="0"
+                    required={!!formData.rate_type}
+                    disabled={!formData.rate_type}
+                    placeholder={formData.rate_type ? `Enter ${formData.rate_type} rate` : "Select rate type first"}
+                    className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  />
+                  {formData.rate_type && formData.base_rate && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      {formData.rate_type === "hourly" && "per hour"}
+                      {formData.rate_type === "daily" && "per day"}
+                      {formData.rate_type === "weekly" && "per week"}
+                      {formData.rate_type === "monthly" && "per month"}
+                    </p>
+                  )}
                 </div>
               </div>
 

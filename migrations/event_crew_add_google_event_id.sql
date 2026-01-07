@@ -13,3 +13,4 @@ where google_event_id is not null;
 -- Add comment for documentation
 comment on column public.event_crew.google_event_id is 'Google Calendar event ID for syncing crew assignments. When a crew assignment is synced to Google Calendar, this stores the event ID from Google Calendar API to enable updates and deletions.';
 
+

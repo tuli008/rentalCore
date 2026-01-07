@@ -9,3 +9,4 @@ GOOGLE_CALENDAR_ENCRYPTION_KEY=your-generated-encryption-key-here
 # Note: NEXT_PUBLIC_APP_URL should already be there, but if not, add:
 # NEXT_PUBLIC_APP_URL=http://localhost:3000
 
+

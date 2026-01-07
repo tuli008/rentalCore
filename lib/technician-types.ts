@@ -15,3 +15,4 @@ export const COMMON_TECHNICIAN_TYPES = [
 
 export type TechnicianType = typeof COMMON_TECHNICIAN_TYPES[number];
 
+

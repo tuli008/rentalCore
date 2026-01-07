@@ -179,21 +179,25 @@ export default function EventDetailPage({
       </div>
 
       {/* Tab Content */}
-      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 ${activeTab === "crew" ? "lg:mr-96" : ""}`}>
+      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 ${activeTab === "crew" ? "h-[calc(100vh-280px)]" : ""}`}>
         {activeTab === "summary" && (
-          <EventSummaryTab
-            event={event}
-            inventory={inventory}
-            crew={crew}
-            tasks={tasks}
-            updateEvent={updateEvent}
-          />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <EventSummaryTab
+              event={event}
+              inventory={inventory}
+              crew={crew}
+              tasks={tasks}
+              updateEvent={updateEvent}
+            />
+          </div>
         )}
         {activeTab === "inventory" && (
-          <EventInventoryTab
-            event={event}
-            inventory={inventory}
-          />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <EventInventoryTab
+              event={event}
+              inventory={inventory}
+            />
+          </div>
         )}
         {activeTab === "crew" && (
           <EventCrewTab event={event} crew={crew} roleRequirements={roleRequirements} />

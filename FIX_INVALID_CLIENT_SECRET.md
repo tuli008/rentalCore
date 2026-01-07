@@ -84,3 +84,4 @@ If the secret is hidden and you can't see it:
    - Copy both new Client ID and Client Secret
    - Update both in `.env.local`
 
+

@@ -67,3 +67,4 @@ Next.js only loads `.env.local` when the server **starts**. If you:
 - ✅ Tested `/api/test-env` - shows `hasGoogleClientId: true`
 - ✅ Clicked "Connect Calendar" - terminal shows `clientId exists: true`
 
+

@@ -28,6 +28,8 @@ export interface EventInventory {
   item_name?: string; // Joined from inventory_items
 }
 
+export type RateType = "hourly" | "daily" | "weekly" | "monthly";
+
 export interface EventCrew {
   id: string;
   event_id: string;
@@ -35,7 +37,8 @@ export interface EventCrew {
   role: string;
   call_time: string | null;
   end_time: string | null;
-  hourly_rate: number | null;
+  rate: number | null; // Rate amount (renamed from hourly_rate)
+  rate_type: RateType | null; // Rate calculation basis
   notes: string | null;
   crew_member_name?: string; // Joined from crew_members
   crew_member_email?: string;
@@ -946,8 +949,10 @@ export async function addEventCrew(formData: FormData): Promise<{
   const role = String(formData.get("role") || "").trim();
   const callTime = String(formData.get("call_time") || "").trim() || null;
   const endTime = String(formData.get("end_time") || "").trim() || null;
-  const hourlyRate = String(formData.get("hourly_rate") || "").trim() || null;
+  const rateStr = String(formData.get("rate") || "").trim() || null;
+  const rateType = String(formData.get("rate_type") || "").trim() || null;
   const notes = String(formData.get("notes") || "").trim() || null;
+  const rate = rateStr ? parseFloat(rateStr) : null;
 
   if (!eventId || !crewMemberId || !role) {
     return { error: "Event ID, crew member ID, and role are required" };
@@ -977,7 +982,7 @@ export async function addEventCrew(formData: FormData): Promise<{
     const [crewMemberResult, eventResult] = await Promise.all([
       supabase
         .from("crew_members")
-        .select("name, email, contact")
+        .select("name, email, contact, rate_type, base_rate")
         .eq("id", crewMemberId)
         .eq("tenant_id", tenantId)
         .single(),
@@ -992,13 +997,23 @@ export async function addEventCrew(formData: FormData): Promise<{
     const crewMember = crewMemberResult.data;
     const event = eventResult.data;
 
+    // Use provided rate/rate_type, or fall back to crew member's base rate/rate_type
+    const finalRate = rate ?? crewMember?.base_rate ?? null;
+    const finalRateType = (rateType as RateType) ?? crewMember?.rate_type ?? null;
+
+    // Validate rate and rate_type are both present or both null
+    if ((finalRate && !finalRateType) || (finalRateType && !finalRate)) {
+      return { error: "Rate and rate type must both be provided or both be empty" };
+    }
+
     const { error: insertError } = await supabase.from("event_crew").insert({
       event_id: eventId,
       crew_member_id: crewMemberId,
       role,
       call_time: callTime,
       end_time: endTime,
-      hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
+      rate: finalRate,
+      rate_type: finalRateType,
       notes,
       tenant_id: tenantId,
     });
@@ -1026,7 +1041,8 @@ export async function addEventCrew(formData: FormData): Promise<{
         role,
         callTime,
         endTime,
-        hourlyRate: hourlyRate ? parseFloat(hourlyRate) : null,
+        rate: finalRate,
+        rateType: finalRateType,
       }).catch((error) => {
         // Log but don't fail the assignment if notification fails
         console.error("[addEventCrew] Failed to send notification:", error);
@@ -1052,8 +1068,10 @@ export async function updateEventCrew(formData: FormData): Promise<{
   const role = String(formData.get("role") || "").trim();
   const callTime = String(formData.get("call_time") || "").trim() || null;
   const endTime = String(formData.get("end_time") || "").trim() || null;
-  const hourlyRate = String(formData.get("hourly_rate") || "").trim() || null;
+  const rateStr = String(formData.get("rate") || "").trim() || null;
+  const rateType = String(formData.get("rate_type") || "").trim() || null;
   const notes = String(formData.get("notes") || "").trim() || null;
+  const rate = rateStr ? parseFloat(rateStr) : null;
 
   if (!id || !role) {
     return { error: "ID and role are required" };
@@ -1091,12 +1109,23 @@ export async function updateEventCrew(formData: FormData): Promise<{
     }
   }
 
+  // Validate rate and rate_type are both present or both null
+  if ((rate && !rateType) || (rateType && !rate)) {
+    return { error: "Rate and rate type must both be provided or both be empty" };
+  }
+
+  // Validate rate_type if provided
+  if (rateType && !["hourly", "daily", "weekly", "monthly"].includes(rateType)) {
+    return { error: "Invalid rate type. Must be hourly, daily, weekly, or monthly" };
+  }
+
   try {
     const updateData: any = {
       role,
       call_time: callTime,
       end_time: endTime,
-      hourly_rate: hourlyRate ? parseFloat(hourlyRate) : null,
+      rate: rate,
+      rate_type: rateType as RateType | null,
       notes,
       updated_at: new Date().toISOString(),
     };
@@ -1113,6 +1142,16 @@ export async function updateEventCrew(formData: FormData): Promise<{
     }
 
     revalidatePath(`/events/${existing.event_id}`);
+    
+    // Auto-sync to Google Calendar if crew member has connected calendar
+    try {
+      const { syncCrewAssignmentToGoogleCalendar } = await import("./google-calendar");
+      await syncCrewAssignmentToGoogleCalendar(id);
+    } catch (calendarError) {
+      // Log but don't fail the update
+      console.warn("[updateEventCrew] Calendar sync error:", calendarError);
+    }
+
     return { success: true };
   } catch (error) {
     console.error("[updateEventCrew] Unexpected error:", error);

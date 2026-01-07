@@ -3,6 +3,10 @@
  * Handles OAuth tokens, creating/updating/deleting calendar events
  */
 
+import "server-only";
+
+import { decryptRefreshToken } from "./google-calendar-encryption";
+
 interface GoogleCalendarEvent {
   summary: string;
   description: string;
@@ -27,7 +31,6 @@ export async function getGoogleAccessToken(
 ): Promise<{ accessToken: string | null; newExpiry: Date | null; error?: string }> {
   try {
     // Decrypt the refresh token
-    const { decryptRefreshToken } = await import("./google-calendar-encryption");
     const refreshToken = await decryptRefreshToken(encryptedRefreshToken);
 
     const clientId = process.env.GOOGLE_CLIENT_ID;

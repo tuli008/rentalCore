@@ -82,3 +82,4 @@ GOOGLE_CLIENT_SECRET=new-web-client-secret-here
 - The OAuth flow is different for desktop vs web applications
 - Our callback route (`/api/google-calendar/callback`) requires a Web application client
 
+

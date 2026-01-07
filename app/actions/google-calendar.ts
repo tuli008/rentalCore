@@ -81,20 +81,32 @@ export async function syncCrewAssignmentToGoogleCalendar(
       return { success: true };
     }
 
-    // Prepare event details
-    const startDateTime = assignment.call_time || event.start_date;
-    const endDateTime = assignment.end_time || event.end_date;
-
-    // Format as ISO 8601 for Google Calendar
-    const startDate = new Date(startDateTime);
-    const endDate = new Date(endDateTime);
-
-    // If only date is provided (no time), use start of day for start and end of day for end
-    if (!assignment.call_time) {
-      startDate.setHours(9, 0, 0, 0); // Default to 9 AM
+    // Determine the date range for the assignment
+    const eventStartDate = new Date(event.start_date);
+    const eventEndDate = new Date(event.end_date);
+    
+    // Get the time component from call_time/end_time if provided, otherwise use defaults
+    let startHour = 9;
+    let startMinute = 0;
+    let endHour = 18;
+    let endMinute = 0;
+    
+    if (assignment.call_time) {
+      const callTime = new Date(assignment.call_time);
+      startHour = callTime.getHours();
+      startMinute = callTime.getMinutes();
     }
-    if (!assignment.end_time) {
-      endDate.setHours(18, 0, 0, 0); // Default to 6 PM
+    
+    if (assignment.end_time) {
+      const endTime = new Date(assignment.end_time);
+      endHour = endTime.getHours();
+      endMinute = endTime.getMinutes();
+    }
+
+    // Generate dates for each day in the event range
+    const eventDates: Date[] = [];
+    for (let d = new Date(eventStartDate); d <= eventEndDate; d.setDate(d.getDate() + 1)) {
+      eventDates.push(new Date(d));
     }
 
     const eventTitle = `${assignment.role} - ${event.name}`;
@@ -106,25 +118,59 @@ Location: ${event.location || "TBD"}
 Assigned via Rental Core.
     `.trim();
 
-    const calendarEvent = {
-      title: eventTitle,
-      description: eventDescription,
-      location: event.location || undefined,
-      startDateTime: startDate.toISOString(),
-      endDateTime: endDate.toISOString(),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    };
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-    // If google_event_id exists, update the event; otherwise create new
+    // If google_event_id exists, delete old events first
     if (assignment.google_event_id) {
-      const updateResult = await updateGoogleCalendarEvent(
+      // Parse comma-separated event IDs or single ID
+      const eventIds = assignment.google_event_id.split(',').map(id => id.trim()).filter(id => id);
+      
+      for (const eventId of eventIds) {
+        const deleteResult = await deleteGoogleCalendarEvent(
+          crewMember.google_calendar_refresh_token,
+          crewMember.google_calendar_token_expiry,
+          eventId
+        );
+        
+        if (deleteResult.tokenInvalid) {
+          // Token is invalid - mark as disconnected
+          await supabase
+            .from("crew_members")
+            .update({ google_calendar_connected: false })
+            .eq("id", crewMember.id)
+            .eq("tenant_id", tenantId);
+          
+          return { success: false, error: "Google Calendar connection expired. Please reconnect." };
+        }
+      }
+    }
+
+    // Create a separate calendar event for each day
+    const createdEventIds: string[] = [];
+    
+    for (const day of eventDates) {
+      const dayStart = new Date(day);
+      dayStart.setHours(startHour, startMinute, 0, 0);
+      
+      const dayEnd = new Date(day);
+      dayEnd.setHours(endHour, endMinute, 0, 0);
+
+      const calendarEvent = {
+        title: eventTitle,
+        description: eventDescription,
+        location: event.location || undefined,
+        startDateTime: dayStart.toISOString(),
+        endDateTime: dayEnd.toISOString(),
+        timeZone,
+      };
+
+      const createResult = await createGoogleCalendarEvent(
         crewMember.google_calendar_refresh_token,
         crewMember.google_calendar_token_expiry,
-        assignment.google_event_id,
         calendarEvent
       );
 
-      if (updateResult.tokenInvalid) {
+      if (createResult.tokenInvalid) {
         // Token is invalid - mark as disconnected
         await supabase
           .from("crew_members")
@@ -132,51 +178,39 @@ Assigned via Rental Core.
           .eq("id", crewMember.id)
           .eq("tenant_id", tenantId);
         
+        // Delete any events we already created
+        for (const eventId of createdEventIds) {
+          await deleteGoogleCalendarEvent(
+            crewMember.google_calendar_refresh_token,
+            crewMember.google_calendar_token_expiry,
+            eventId
+          );
+        }
+        
         return { success: false, error: "Google Calendar connection expired. Please reconnect." };
       }
 
-      if (updateResult.success) {
-        return { success: true, eventId: assignment.google_event_id };
+      if (createResult.eventId) {
+        createdEventIds.push(createResult.eventId);
       } else {
-        // If update fails, try creating a new event
-        console.warn(
-          `[syncCrewAssignmentToGoogleCalendar] Update failed, creating new event: ${updateResult.error}`
-        );
+        console.error(`[syncCrewAssignmentToGoogleCalendar] Failed to create event for ${day.toISOString()}: ${createResult.error}`);
+        // Continue creating other events even if one fails
       }
     }
 
-    // Create new calendar event
-    const createResult = await createGoogleCalendarEvent(
-      crewMember.google_calendar_refresh_token,
-      crewMember.google_calendar_token_expiry,
-      calendarEvent
-    );
-
-    if (createResult.tokenInvalid) {
-      // Token is invalid - mark as disconnected
-      await supabase
-        .from("crew_members")
-        .update({ google_calendar_connected: false })
-        .eq("id", crewMember.id)
-        .eq("tenant_id", tenantId);
+    if (createdEventIds.length > 0) {
+      // Store all event IDs as comma-separated string
+      const eventIdsString = createdEventIds.join(',');
       
-      return { success: false, error: "Google Calendar connection expired. Please reconnect." };
-    }
-
-    if (createResult.eventId) {
-      // Update the event_crew record with the google_event_id
       await supabase
         .from("event_crew")
-        .update({ google_event_id: createResult.eventId })
+        .update({ google_event_id: eventIdsString })
         .eq("id", eventCrewId)
         .eq("tenant_id", tenantId);
 
-      // Update token expiry if we got a new expiry time (from token refresh)
-      // Note: We'd need to store the new expiry, but for now we'll rely on refresh
-
-      return { success: true, eventId: createResult.eventId };
+      return { success: true, eventId: createdEventIds[0] }; // Return first ID for backwards compatibility
     } else {
-      return { success: false, error: createResult.error || "Failed to create calendar event" };
+      return { success: false, error: "Failed to create any calendar events" };
     }
   } catch (error) {
     console.error("[syncCrewAssignmentToGoogleCalendar] Unexpected error:", error);
@@ -233,15 +267,28 @@ export async function removeCrewAssignmentFromGoogleCalendar(
       return { success: true };
     }
 
-    // Delete the calendar event
-    const deleteResult = await deleteGoogleCalendarEvent(
-      crewMember.google_calendar_refresh_token,
-      crewMember.google_calendar_token_expiry,
-      assignment.google_event_id
-    );
+    // Parse comma-separated event IDs or single ID
+    const eventIds = assignment.google_event_id.split(',').map(id => id.trim()).filter(id => id);
+    let allDeleted = true;
+    let lastError: string | undefined;
 
-    if (deleteResult.success) {
-      // Clear the google_event_id
+    // Delete all calendar events
+    for (const eventId of eventIds) {
+      const deleteResult = await deleteGoogleCalendarEvent(
+        crewMember.google_calendar_refresh_token,
+        crewMember.google_calendar_token_expiry,
+        eventId
+      );
+
+      if (!deleteResult.success) {
+        allDeleted = false;
+        lastError = deleteResult.error;
+        console.warn(`[removeCrewAssignmentFromGoogleCalendar] Failed to delete event ${eventId}: ${deleteResult.error}`);
+      }
+    }
+
+    // Clear the google_event_id if all deletions succeeded or if token is invalid
+    if (allDeleted || eventIds.length === 0) {
       await supabase
         .from("event_crew")
         .update({ google_event_id: null })
@@ -249,7 +296,10 @@ export async function removeCrewAssignmentFromGoogleCalendar(
         .eq("tenant_id", tenantId);
     }
 
-    return deleteResult;
+    return { 
+      success: allDeleted, 
+      error: lastError 
+    };
   } catch (error) {
     console.error("[removeCrewAssignmentFromGoogleCalendar] Unexpected error:", error);
     return {

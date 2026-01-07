@@ -130,3 +130,4 @@ After restarting, check terminal logs. When you click "Connect Calendar", you sh
 ✅ If `clientId exists: true` → It's working!
 ❌ If `clientId exists: false` → Variables not loaded (restart server)
 
+

@@ -3,6 +3,8 @@
  * Uses Node.js crypto for encryption/decryption
  */
 
+import "server-only";
+
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from "crypto";
 import { promisify } from "util";
 
@@ -80,4 +82,5 @@ export async function decryptRefreshToken(encryptedToken: string): Promise<strin
     throw new Error("Failed to decrypt refresh token");
   }
 }
+
 

@@ -11,3 +11,4 @@ create index if not exists idx_crew_members_technician_type on public.crew_membe
 -- Step 3: Add comment for documentation
 comment on column public.crew_members.technician_type is 'Primary technician type/specialty of the crew member (e.g., Lighting Technician, Sound Technician). Used for availability checking and role assignment.';
 
+

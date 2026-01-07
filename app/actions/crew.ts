@@ -6,6 +6,8 @@ import { requireAdmin } from "@/lib/auth";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 
+export type RateType = "hourly" | "daily" | "weekly" | "monthly";
+
 export interface CrewMember {
   id: string;
   name: string;
@@ -13,6 +15,8 @@ export interface CrewMember {
   contact: string | null;
   role: "Own Crew" | "Freelancer";
   technician_type: string | null; // Primary technician specialty (e.g., "Lighting Technician")
+  rate_type: RateType | null; // Rate calculation basis (hourly, daily, weekly, monthly)
+  base_rate: number | null; // Base rate amount (depends on rate_type)
   google_calendar_refresh_token: string | null; // OAuth refresh token for Google Calendar sync (encrypted)
   google_calendar_token_expiry: string | null; // Access token expiry timestamp
   google_calendar_connected: boolean; // Connection status flag
@@ -79,6 +83,9 @@ export async function createCrewMember(formData: FormData): Promise<{
   const contact = String(formData.get("contact") || "").trim() || null;
   const role = String(formData.get("role") || "").trim() as "Own Crew" | "Freelancer";
   const technicianType = String(formData.get("technician_type") || "").trim() || null;
+  const rateType = String(formData.get("rate_type") || "").trim() || null;
+  const baseRateStr = String(formData.get("base_rate") || "").trim();
+  const baseRate = baseRateStr ? parseFloat(baseRateStr) : null;
 
   if (!name) {
     return { error: "Name is required" };
@@ -93,6 +100,19 @@ export async function createCrewMember(formData: FormData): Promise<{
     return { error: "Invalid email format" };
   }
 
+  // Validate rate type and base rate
+  if (rateType && !["hourly", "daily", "weekly", "monthly"].includes(rateType)) {
+    return { error: "Invalid rate type. Must be hourly, daily, weekly, or monthly" };
+  }
+
+  if (rateType && (!baseRate || baseRate <= 0)) {
+    return { error: "Base rate is required and must be greater than 0 when rate type is provided" };
+  }
+
+  if (!rateType && baseRate) {
+    return { error: "Rate type is required when base rate is provided" };
+  }
+
   try {
     const supabase = await createServerSupabaseClient();
     const { error: insertError } = await supabase.from("crew_members").insert({
@@ -101,6 +121,8 @@ export async function createCrewMember(formData: FormData): Promise<{
       contact,
       role,
       technician_type: technicianType,
+      rate_type: rateType as RateType | null,
+      base_rate: baseRate,
       tenant_id: tenantId,
     });
 
@@ -140,6 +162,9 @@ export async function updateCrewMember(formData: FormData): Promise<{
   const contact = String(formData.get("contact") || "").trim() || null;
   const role = String(formData.get("role") || "").trim() as "Own Crew" | "Freelancer";
   const technicianType = String(formData.get("technician_type") || "").trim() || null;
+  const rateType = String(formData.get("rate_type") || "").trim() || null;
+  const baseRateStr = String(formData.get("base_rate") || "").trim();
+  const baseRate = baseRateStr ? parseFloat(baseRateStr) : null;
 
   if (!id) {
     return { error: "Crew member ID is required" };
@@ -156,6 +181,19 @@ export async function updateCrewMember(formData: FormData): Promise<{
   // Validate email format if provided
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { error: "Invalid email format" };
+  }
+
+  // Validate rate type and base rate
+  if (rateType && !["hourly", "daily", "weekly", "monthly"].includes(rateType)) {
+    return { error: "Invalid rate type. Must be hourly, daily, weekly, or monthly" };
+  }
+
+  if (rateType && (!baseRate || baseRate <= 0)) {
+    return { error: "Base rate is required and must be greater than 0 when rate type is provided" };
+  }
+
+  if (!rateType && baseRate) {
+    return { error: "Rate type is required when base rate is provided" };
   }
 
   // Require admin access
@@ -175,6 +213,8 @@ export async function updateCrewMember(formData: FormData): Promise<{
         contact,
         role,
         technician_type: technicianType,
+        rate_type: rateType as RateType | null,
+        base_rate: baseRate,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -280,7 +320,13 @@ export async function getCrewMemberCalendarData(
   excludeEventId?: string,
   includeCurrentEvent: boolean = false,
 ): Promise<{
-  busyDates: Array<{ start: string; end: string; eventName: string }>;
+  busyDates: Array<{ 
+    start: string; 
+    end: string; 
+    eventName: string;
+    callTime: string | null;
+    endTime: string | null;
+  }>;
 }> {
   try {
     const supabase = await createServerSupabaseClient();
@@ -328,6 +374,8 @@ export async function getCrewMemberCalendarData(
           start: startDate,
           end: endDate,
           eventName: event.name || "Unknown Event",
+          callTime: a.call_time || null,
+          endTime: a.end_time || null,
         };
       })
       .filter((dateRange) => dateRange.start && dateRange.end); // Filter out any that still don't have dates
