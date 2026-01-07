@@ -14,24 +14,64 @@ export async function createQuote(formData: FormData) {
     return { error: "Name, start date, and end date are required" };
   }
 
-  const { error } = await supabase.from("quotes").insert({
-    name,
-    start_date: startDate,
-    end_date: endDate,
-    status: "draft",
-    tenant_id: tenantId,
-  });
+  const { data: quoteData, error: insertError } = await supabase
+    .from("quotes")
+    .insert({
+      name,
+      start_date: startDate,
+      end_date: endDate,
+      status: "draft",
+      tenant_id: tenantId,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
+  if (insertError) {
     console.error("[createQuote] Error creating quote:", {
       action: "createQuote",
       name,
-      error: error.message,
+      error: insertError.message,
     });
     return { error: "Failed to create quote" };
   }
 
+  // Automatically create an event for this quote (if one doesn't already exist)
+  try {
+    // Check if event already exists for this quote
+    const { data: existingEvent } = await supabase
+      .from("events")
+      .select("id")
+      .eq("quote_id", quoteData.id)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+
+    if (!existingEvent) {
+      const { createEvent } = await import("@/app/actions/events");
+      const eventFormData = new FormData();
+      eventFormData.append("name", name);
+      eventFormData.append("description", `Event created from quote: ${name}`);
+      eventFormData.append("start_date", startDate);
+      eventFormData.append("end_date", endDate);
+      eventFormData.append("quote_id", quoteData.id);
+      eventFormData.append("status", "prepping"); // Draft quotes get "prepping" status
+
+      const eventResult = await createEvent(eventFormData);
+      if (eventResult.error) {
+        console.error("[createQuote] Error creating event:", eventResult.error);
+        // Don't fail quote creation if event creation fails - event can be created manually later
+      } else {
+        console.log(`[createQuote] Created event ${eventResult.eventId} for quote ${quoteData.id}`);
+      }
+    } else {
+      console.log(`[createQuote] Event ${existingEvent.id} already exists for quote ${quoteData.id}`);
+    }
+  } catch (error) {
+    console.error("[createQuote] Unexpected error creating event:", error);
+    // Don't fail quote creation if event creation fails
+  }
+
   revalidatePath("/quotes");
+  revalidatePath("/events"); // Revalidate events page to show the new event
   return { success: true };
 }
 

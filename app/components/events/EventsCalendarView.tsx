@@ -52,7 +52,31 @@ export default function EventsCalendarView({
 
       try {
         const events = await getEventsForCalendar(startDateStr, endDateStr);
-        setCalendarEvents(events);
+        
+        // Client-side deduplication as a safeguard
+        const seenIds = new Set<string>();
+        const deduplicatedById = events.filter((event) => {
+          if (seenIds.has(event.id)) {
+            console.warn(`[EventsCalendarView] Duplicate event ID found: ${event.id} - ${event.title}`);
+            return false;
+          }
+          seenIds.add(event.id);
+          return true;
+        });
+
+        const seenByNameAndDate = new Set<string>();
+        const deduplicated = deduplicatedById.filter((event) => {
+          const key = `${event.title}-${event.startDate}-${event.endDate}`;
+          if (seenByNameAndDate.has(key)) {
+            console.warn(`[EventsCalendarView] Duplicate event (name+dates) found: ${event.id} (${event.title} ${event.startDate}-${event.endDate})`);
+            return false;
+          }
+          seenByNameAndDate.add(key);
+          return true;
+        });
+
+        console.log(`[EventsCalendarView] Deduplicated: ${events.length} -> ${deduplicated.length} events`);
+        setCalendarEvents(deduplicated);
       } catch (error) {
         console.error("Error loading calendar events:", error);
       } finally {

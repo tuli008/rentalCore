@@ -270,6 +270,75 @@ export async function updateCrewLeaveStatus(formData: FormData): Promise<{
 }
 
 /**
+ * Get calendar data for a crew member (busy dates from assignments)
+ */
+export async function getCrewMemberCalendarData(
+  crewMemberId: string,
+  excludeEventId?: string,
+  includeCurrentEvent: boolean = false,
+): Promise<{
+  busyDates: Array<{ start: string; end: string; eventName: string }>;
+}> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const tenantId = "11111111-1111-1111-1111-111111111111";
+
+    let query = supabase
+      .from("event_crew")
+      .select(`
+        event_id,
+        call_time,
+        end_time,
+        events:event_id (
+          id,
+          name,
+          start_date,
+          end_date
+        )
+      `)
+      .eq("crew_member_id", crewMemberId)
+      .eq("tenant_id", tenantId)
+      .order("call_time", { ascending: true, nullsFirst: true });
+
+    // Only exclude current event if explicitly requested (for availability checks)
+    // For calendar display, we want to show all assignments including current event
+    if (excludeEventId && !includeCurrentEvent) {
+      query = query.neq("event_id", excludeEventId);
+    }
+
+    const { data: assignments, error } = await query;
+
+    if (error) {
+      console.error("[getCrewMemberCalendarData] Error:", error);
+      return { busyDates: [] };
+    }
+
+    const busyDates = (assignments || [])
+      .filter((a: any) => a.events) // Must have event data
+      .map((a: any) => {
+        const event = a.events;
+        // Use call_time/end_time if available, otherwise fall back to event dates
+        const startDate = a.call_time || event.start_date;
+        const endDate = a.end_time || event.end_date;
+        
+        return {
+          start: startDate,
+          end: endDate,
+          eventName: event.name || "Unknown Event",
+        };
+      })
+      .filter((dateRange) => dateRange.start && dateRange.end); // Filter out any that still don't have dates
+
+    console.log(`[getCrewMemberCalendarData] Found ${busyDates.length} busy date ranges for crew member ${crewMemberId}:`, busyDates);
+
+    return { busyDates };
+  } catch (error) {
+    console.error("[getCrewMemberCalendarData] Unexpected error:", error);
+    return { busyDates: [] };
+  }
+}
+
+/**
  * Delete a crew member
  */
 export async function deleteCrewMember(formData: FormData): Promise<{

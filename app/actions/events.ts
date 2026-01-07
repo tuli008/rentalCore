@@ -89,7 +89,7 @@ export async function getEvents(): Promise<Event[]> {
     const supabase = await createServerSupabaseClient();
     const { data, error } = await supabase
       .from("events")
-      .select("*")
+      .select("id, name, description, start_date, end_date, location, status, quote_id, created_at, updated_at")
       .eq("tenant_id", tenantId)
       .order("start_date", { ascending: false });
 
@@ -98,7 +98,42 @@ export async function getEvents(): Promise<Event[]> {
       return [];
     }
 
-    const events = data || [];
+    let events = data || [];
+    console.log(`[getEvents] Fetched ${events.length} events from database`);
+
+    // Deduplicate events by ID first (safety measure in case of any query issues)
+    const seenIds = new Set<string>();
+    const beforeIdDedup = events.length;
+    events = events.filter((event) => {
+      if (seenIds.has(event.id)) {
+        console.warn(`[getEvents] Duplicate event ID found: ${event.id} - ${event.name}`);
+        return false;
+      }
+      seenIds.add(event.id);
+      return true;
+    });
+    console.log(`[getEvents] After ID deduplication: ${events.length} events (removed ${beforeIdDedup - events.length} by ID)`);
+    
+    // Also deduplicate by name + dates (might be same event created multiple times)
+    const seenByNameAndDate = new Map<string, string>(); // key -> event ID to keep
+    const duplicateByNameAndDate: string[] = [];
+    const beforeNameDateDedup = events.length;
+    events = events.filter((event) => {
+      const key = `${event.name}|${event.start_date}|${event.end_date}`;
+      const existingId = seenByNameAndDate.get(key);
+      if (existingId) {
+        duplicateByNameAndDate.push(`${event.id} (${event.name}) matches ${existingId}`);
+        console.warn(`[getEvents] Duplicate event by name+dates found: ${event.id} (${event.name} ${event.start_date}-${event.end_date}) matches existing ${existingId}`);
+        return false; // Keep the first one, remove duplicates
+      }
+      seenByNameAndDate.set(key, event.id);
+      return true;
+    });
+    
+    if (duplicateByNameAndDate.length > 0) {
+      console.warn(`[getEvents] Found ${duplicateByNameAndDate.length} duplicate event(s) by name+dates:`, duplicateByNameAndDate);
+    }
+    console.log(`[getEvents] Final count after all deduplication: ${events.length} events (removed ${beforeNameDateDedup - events.length} by name+dates)`);
 
     // Sync event statuses with quote statuses
     // Get all events with quotes
@@ -750,6 +785,19 @@ export async function createEvent(formData: FormData): Promise<{
 
       finalQuoteId = quoteData.id;
       console.log(`[createEvent] Created draft quote ${finalQuoteId} for event`);
+    } else {
+      // If quote_id is provided, check if event already exists for this quote
+      const { data: existingEvent } = await supabase
+        .from("events")
+        .select("id")
+        .eq("quote_id", quoteId)
+        .eq("tenant_id", tenantId)
+        .maybeSingle();
+
+      if (existingEvent) {
+        console.log(`[createEvent] Event ${existingEvent.id} already exists for quote ${quoteId}`);
+        return { success: true, eventId: existingEvent.id };
+      }
     }
 
     const { data, error: insertError } = await supabase
@@ -1087,6 +1135,15 @@ export async function deleteEventCrew(formData: FormData): Promise<{
   }
 
   try {
+    // Remove from Google Calendar first if synced
+    const { removeCrewAssignmentFromGoogleCalendar } = await import("./google-calendar");
+    try {
+      await removeCrewAssignmentFromGoogleCalendar(id);
+    } catch (calendarError) {
+      // Log but don't fail - calendar cleanup is optional
+      console.warn("[deleteEventCrew] Error removing from Google Calendar:", calendarError);
+    }
+
     const supabase = await createServerSupabaseClient();
     const { error: deleteError } = await supabase
       .from("event_crew")
@@ -1313,6 +1370,106 @@ export async function syncAllEventStatuses(): Promise<{
 }
 
 /**
+ * Create events for all quotes that don't have events yet
+ * Useful for syncing existing quotes with the calendar
+ */
+export async function syncQuotesToEvents(): Promise<{
+  success?: boolean;
+  created?: number;
+  skipped?: number;
+  error?: string;
+}> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    
+    // Get all quotes
+    const { data: quotes, error: quotesError } = await supabase
+      .from("quotes")
+      .select("id, name, start_date, end_date, status")
+      .eq("tenant_id", tenantId);
+
+    if (quotesError) {
+      console.error("[syncQuotesToEvents] Error fetching quotes:", quotesError);
+      return { error: "Failed to fetch quotes" };
+    }
+
+    if (!quotes || quotes.length === 0) {
+      return { success: true, created: 0, skipped: 0 };
+    }
+
+    // Get all events with quote_ids
+    const { data: events, error: eventsError } = await supabase
+      .from("events")
+      .select("quote_id")
+      .eq("tenant_id", tenantId)
+      .not("quote_id", "is", null);
+
+    if (eventsError) {
+      console.error("[syncQuotesToEvents] Error fetching events:", eventsError);
+      return { error: "Failed to fetch events" };
+    }
+
+    // Create a set of quote_ids that already have events
+    const quoteIdsWithEvents = new Set<string>();
+    events?.forEach((event) => {
+      if (event.quote_id) {
+        quoteIdsWithEvents.add(event.quote_id);
+      }
+    });
+
+    // Find quotes without events
+    const quotesWithoutEvents = quotes.filter((quote) => !quoteIdsWithEvents.has(quote.id));
+    
+    if (quotesWithoutEvents.length === 0) {
+      console.log("[syncQuotesToEvents] All quotes already have events");
+      return { success: true, created: 0, skipped: quotes.length };
+    }
+
+    console.log(`[syncQuotesToEvents] Found ${quotesWithoutEvents.length} quotes without events`);
+
+    // Create events for quotes without events
+    let createdCount = 0;
+    let skippedCount = 0;
+
+    for (const quote of quotesWithoutEvents) {
+      try {
+        // Determine event status based on quote status
+        const eventStatus = quote.status === "accepted" ? "planned" : "prepping";
+
+        const eventFormData = new FormData();
+        eventFormData.append("name", quote.name);
+        eventFormData.append("description", `Event created from quote: ${quote.name}`);
+        eventFormData.append("start_date", quote.start_date);
+        eventFormData.append("end_date", quote.end_date);
+        eventFormData.append("quote_id", quote.id);
+        eventFormData.append("status", eventStatus);
+
+        const eventResult = await createEvent(eventFormData);
+        if (eventResult.error) {
+          console.error(`[syncQuotesToEvents] Error creating event for quote ${quote.id}:`, eventResult.error);
+          skippedCount++;
+        } else {
+          console.log(`[syncQuotesToEvents] Created event ${eventResult.eventId} for quote ${quote.id}`);
+          createdCount++;
+        }
+      } catch (error) {
+        console.error(`[syncQuotesToEvents] Unexpected error creating event for quote ${quote.id}:`, error);
+        skippedCount++;
+      }
+    }
+
+    revalidatePath("/events");
+    revalidatePath("/quotes");
+
+    console.log(`[syncQuotesToEvents] Created ${createdCount} events, skipped ${skippedCount}`);
+    return { success: true, created: createdCount, skipped: skippedCount };
+  } catch (error) {
+    console.error("[syncQuotesToEvents] Unexpected error:", error);
+    return { error: "An unexpected error occurred" };
+  }
+}
+
+/**
  * Get events for calendar view (minimal data only)
  * Automatically syncs event statuses with their quote statuses
  */
@@ -1344,7 +1501,30 @@ export async function getEventsForCalendar(
       return [];
     }
 
-    const events = data || [];
+    let events = data || [];
+
+    // Deduplicate events by ID (safety measure in case of any query issues)
+    const seenIds = new Set<string>();
+    events = events.filter((event) => {
+      if (seenIds.has(event.id)) {
+        console.warn(`[getEventsForCalendar] Duplicate event ID found: ${event.id} - ${event.name}`);
+        return false;
+      }
+      seenIds.add(event.id);
+      return true;
+    });
+
+    // Further deduplicate by name and dates, in case different IDs have same logical event
+    const seenEvents = new Set<string>();
+    events = events.filter((event) => {
+      const eventKey = `${event.name}-${event.start_date}-${event.end_date}`;
+      if (seenEvents.has(eventKey)) {
+        console.warn(`[getEventsForCalendar] Duplicate event (name+dates) found: ${event.name} (${event.start_date} to ${event.end_date})`);
+        return false;
+      }
+      seenEvents.add(eventKey);
+      return true;
+    });
 
     // Sync event statuses with quote statuses (same logic as getEvents)
     const eventsWithQuotes = events.filter((e) => e.quote_id);

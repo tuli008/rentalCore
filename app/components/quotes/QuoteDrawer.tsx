@@ -387,6 +387,7 @@ export default function QuoteDrawer({ isOpen, onClose }: QuoteDrawerProps) {
             id: item.id,
             quote_id: "",
             item_id: item.itemId,
+            item_type: "inventory",
             quantity: item.quantity,
             unit_price_snapshot: item.unitPrice,
           }))}

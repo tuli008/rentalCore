@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { syncCrewAssignmentToGoogleCalendar } from "./google-calendar";
 
 export interface CrewAssignmentNotification {
   crewMemberId: string;
@@ -301,7 +302,7 @@ export async function sendCrewNotification(
     }
 
     // Send notification
-    return await notifyCrewAssignment({
+    const notificationResult = await notifyCrewAssignment({
       crewMemberId: crewMember.id,
       crewMemberName: crewMember.name,
       crewMemberEmail: crewMember.email,
@@ -315,6 +316,22 @@ export async function sendCrewNotification(
       endTime: assignment.end_time,
       hourlyRate: assignment.hourly_rate,
     });
+
+    // Also sync to Google Calendar if crew member has connected their calendar
+    try {
+      const calendarResult = await syncCrewAssignmentToGoogleCalendar(eventCrewId);
+      if (calendarResult.success && calendarResult.eventId) {
+        console.log(`[sendCrewNotification] Successfully synced to Google Calendar: ${calendarResult.eventId}`);
+      } else if (calendarResult.error) {
+        // Log error but don't fail the notification
+        console.warn(`[sendCrewNotification] Google Calendar sync failed: ${calendarResult.error}`);
+      }
+    } catch (calendarError) {
+      // Log error but don't fail the notification
+      console.error("[sendCrewNotification] Error syncing to Google Calendar:", calendarError);
+    }
+
+    return notificationResult;
   } catch (error) {
     console.error("[sendCrewNotification] Unexpected error:", error);
     return {

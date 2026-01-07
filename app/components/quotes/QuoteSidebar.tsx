@@ -87,10 +87,12 @@ export default function QuoteSidebar({
   // Create a map of item_id -> quantity already in quote
   const itemsInQuote = useMemo(() => {
     const map = new Map<string, number>();
-    existingQuoteItems.forEach((item) => {
-      const currentQty = map.get(item.item_id) || 0;
-      map.set(item.item_id, currentQty + item.quantity);
-    });
+    existingQuoteItems
+      .filter((item) => item.item_type === "inventory" && item.item_id !== null)
+      .forEach((item) => {
+        const currentQty = map.get(item.item_id!) || 0;
+        map.set(item.item_id!, currentQty + item.quantity);
+      });
     return map;
   }, [existingQuoteItems]);
 

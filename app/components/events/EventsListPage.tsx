@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Event } from "@/app/actions/events";
@@ -21,7 +21,65 @@ export default function EventsListPage({
 }: EventsListPageProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [events, setEvents] = useState<Event[]>(initialEvents);
+  
+  // Deduplicate events by ID and by name+dates (in case there are duplicates from database)
+  const uniqueEvents = useMemo(() => {
+    // First deduplicate by ID
+    const seenIds = new Set<string>();
+    let deduplicatedById = initialEvents.filter((event) => {
+      if (seenIds.has(event.id)) {
+        console.warn(`[EventsListPage] Duplicate event ID found: ${event.id} - ${event.name}`);
+        return false;
+      }
+      seenIds.add(event.id);
+      return true;
+    });
+    
+    // Then deduplicate by name + dates (keep first occurrence)
+    const seenByNameAndDate = new Map<string, string>();
+    const deduplicated = deduplicatedById.filter((event) => {
+      const key = `${event.name}|${event.start_date}|${event.end_date}`;
+      const existingId = seenByNameAndDate.get(key);
+      if (existingId) {
+        console.warn(`[EventsListPage] Duplicate event by name+dates found: ${event.id} (${event.name} ${event.start_date}-${event.end_date}) matches existing ${existingId}`);
+        return false;
+      }
+      seenByNameAndDate.set(key, event.id);
+      return true;
+    });
+    
+    console.log(`[EventsListPage] Deduplicated: ${initialEvents.length} -> ${deduplicated.length} events`);
+    return deduplicated;
+  }, [initialEvents]);
+  
+  const [events, setEvents] = useState<Event[]>(uniqueEvents);
+  
+  // Update events when initialEvents changes (e.g., after refresh)
+  useEffect(() => {
+    // First deduplicate by ID
+    const seenIds = new Set<string>();
+    let deduplicatedById = initialEvents.filter((event) => {
+      if (seenIds.has(event.id)) {
+        return false;
+      }
+      seenIds.add(event.id);
+      return true;
+    });
+    
+    // Then deduplicate by name + dates
+    const seenByNameAndDate = new Map<string, string>();
+    const deduplicated = deduplicatedById.filter((event) => {
+      const key = `${event.name}|${event.start_date}|${event.end_date}`;
+      const existingId = seenByNameAndDate.get(key);
+      if (existingId) {
+        return false;
+      }
+      seenByNameAndDate.set(key, event.id);
+      return true;
+    });
+    
+    setEvents(deduplicated);
+  }, [initialEvents]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
   const [error, setError] = useState<string | null>(null);

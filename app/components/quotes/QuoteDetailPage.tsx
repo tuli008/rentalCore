@@ -215,23 +215,25 @@ export default function QuoteDetailPage({
         return;
       }
       
-      // Fetch availability for all items in parallel
-      const promises = currentItems.map(async (item) => {
+      // Fetch availability for all inventory items in parallel (skip labor items which have item_id: null)
+      const promises = currentItems
+        .filter((item) => item.item_type === "inventory" && item.item_id !== null)
+        .map(async (item) => {
         if (cancelled) return { itemId: item.item_id, breakdown: null };
         
         try {
-          const breakdown = await getItemAvailabilityBreakdown(item.item_id, {
+            const breakdown = await getItemAvailabilityBreakdown(item.item_id!, {
             quoteId: quote.id,
             startDate: quote.start_date,
             endDate: quote.end_date,
           });
-          return { itemId: item.item_id, breakdown };
+            return { itemId: item.item_id!, breakdown };
         } catch (error) {
           console.error(
             `Error fetching availability breakdown for item ${item.item_id}:`,
             error,
           );
-          return { itemId: item.item_id, breakdown: null };
+            return { itemId: item.item_id!, breakdown: null };
         }
       });
       
@@ -267,14 +269,16 @@ export default function QuoteDetailPage({
       return "green"; // Default to green while loading
     }
     return calculateQuoteRisk(
-      quote.items.map((item) => {
+      quote.items
+        .filter((item) => item.item_type === "inventory" && item.item_id !== null)
+        .map((item) => {
         // Use local quantity if available, otherwise fall back to server quantity
         const localQuantityStr = localQuantities.get(item.id);
         const quantity = localQuantityStr
           ? parseInt(localQuantityStr, 10) || 0
           : item.quantity;
         return {
-          item_id: item.item_id,
+            item_id: item.item_id!,
           quantity,
           item_is_serialized: item.item_is_serialized,
         };
@@ -329,6 +333,7 @@ export default function QuoteDetailPage({
       id: `temp-${Date.now()}`, // Temporary ID
       quote_id: quote.id,
       item_id: itemId,
+      item_type: "inventory",
       item_name: itemName,
       quantity,
       unit_price_snapshot: unitPrice,
@@ -570,7 +575,7 @@ export default function QuoteDetailPage({
 
     console.log("[QuoteDetailPage] Attempting to confirm quote:", quote.id);
     console.log("[QuoteDetailPage] Quote has labor items:", quote.items.filter(item => item.item_type === "labor"));
-    
+
     const result = await confirmQuotation(formData);
     console.log("[QuoteDetailPage] Confirm result:", result);
     
@@ -1003,12 +1008,12 @@ export default function QuoteDetailPage({
 
             if (isLoadingAvailabilities && !isReadOnly && inventoryItems.length > 0) {
               return (
-                <div className="flex items-center justify-center py-12">
-                  <div className="text-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-sm text-gray-600">Loading availability data...</p>
-                  </div>
-                </div>
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p className="text-sm text-gray-600">Loading availability data...</p>
+              </div>
+            </div>
               );
             }
 
@@ -1021,298 +1026,299 @@ export default function QuoteDetailPage({
                   {inventoryItems.length > 0 ? (
                     <>
                     {isReadOnly ? (
-                      // Table format for accepted quotes
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse">
-                          <thead>
-                            <tr className="border-b-2 border-gray-300">
-                              <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">
-                                Item Name
-                              </th>
-                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
-                                Quantity
-                              </th>
-                              <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
-                                Price
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
+            // Table format for accepted quotes
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-gray-300">
+                    <th className="text-left py-2 px-3 font-semibold text-gray-700 text-sm">
+                      Item Name
+                    </th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                      Quantity
+                    </th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700 text-sm">
+                      Price
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
                             {inventoryItems.map((item) => {
-                              const localQuantityStr = localQuantities.get(item.id);
-                              const displayQuantity = localQuantityStr
-                                ? parseInt(localQuantityStr, 10) || 0
-                                : item.quantity;
-                              const lineTotal =
-                                displayQuantity * item.unit_price_snapshot * numberOfDays;
+                    const localQuantityStr = localQuantities.get(item.id);
+                    const displayQuantity = localQuantityStr
+                      ? parseInt(localQuantityStr, 10) || 0
+                      : item.quantity;
+                    const lineTotal =
+                      displayQuantity * item.unit_price_snapshot * numberOfDays;
 
-                              return (
-                                <tr
-                                  key={item.id}
-                                  className="border-b border-gray-200 hover:bg-gray-50"
-                                >
-                                  <td className="py-2 px-3 text-gray-900 font-medium">
-                                    {item.item_name || "Unknown Item"}
-                                  </td>
-                                  <td className="py-2 px-3 text-right text-gray-700">
-                                    {displayQuantity}
-                                  </td>
-                                  <td className="py-2 px-3 text-right text-gray-900 font-semibold">
-                                    ${lineTotal.toFixed(2)}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly}>
-                        <div className="mt-1 space-y-1">
+                    return (
+                      <tr
+                        key={item.id}
+                        className="border-b border-gray-200 hover:bg-gray-50"
+                      >
+                        <td className="py-2 px-3 text-gray-900 font-medium">
+                          {item.item_name || "Unknown Item"}
+                        </td>
+                        <td className="py-2 px-3 text-right text-gray-700">
+                          {displayQuantity}
+                        </td>
+                        <td className="py-2 px-3 text-right text-gray-900 font-semibold">
+                          ${lineTotal.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <QuoteDropZone isEmpty={false} isReadOnly={isReadOnly}>
+              <div className="mt-1 space-y-1">
                           {inventoryItems.map((item) => {
-                            // Only get breakdown if data is loaded, otherwise use safe defaults
-                            const breakdown = isLoadingAvailabilities
-                              ? null
-                              : (itemAvailabilities.get(item.item_id) || {
-                                  available: 0,
-                                  reserved: 0,
-                                  inTransit: 0,
-                                  outOfService: 0,
-                                  total: 0,
-                                });
-                            // Use local quantity if available, otherwise fall back to server quantity
-                            const localQuantityStr = localQuantities.get(item.id);
-                            const displayQuantity = localQuantityStr
-                              ? parseInt(localQuantityStr, 10) || 0
-                              : item.quantity;
-                            // Reserved shows what the user typed (this quote's quantity)
-                            const realTimeReserved = displayQuantity;
-                            const lineTotal =
-                              displayQuantity * item.unit_price_snapshot * numberOfDays;
-                            // Use effectiveAvailable if available (date-aware), otherwise fall back to available
-                            // Only calculate if breakdown is loaded
-                            const effectiveAvailable = breakdown
-                              ? (breakdown.effectiveAvailable !== undefined
-                                  ? breakdown.effectiveAvailable
-                                  : breakdown.available)
-                              : 0;
-                            const isOverAvailable = breakdown ? displayQuantity > effectiveAvailable : false;
-                            const isHighlighted = highlightedItemId === item.id;
+                // Only get breakdown if data is loaded, otherwise use safe defaults
+                // Note: item.item_id is guaranteed to be non-null for inventory items
+                const breakdown = isLoadingAvailabilities
+                  ? null
+                  : (itemAvailabilities.get(item.item_id!) || {
+                      available: 0,
+                      reserved: 0,
+                      inTransit: 0,
+                      outOfService: 0,
+                      total: 0,
+                    });
+                // Use local quantity if available, otherwise fall back to server quantity
+                const localQuantityStr = localQuantities.get(item.id);
+                const displayQuantity = localQuantityStr
+                  ? parseInt(localQuantityStr, 10) || 0
+                  : item.quantity;
+                // Reserved shows what the user typed (this quote's quantity)
+                const realTimeReserved = displayQuantity;
+                const lineTotal =
+                  displayQuantity * item.unit_price_snapshot * numberOfDays;
+                // Use effectiveAvailable if available (date-aware), otherwise fall back to available
+                // Only calculate if breakdown is loaded
+                const effectiveAvailable = breakdown
+                  ? (breakdown.effectiveAvailable !== undefined
+                      ? breakdown.effectiveAvailable
+                      : breakdown.available)
+                  : 0;
+                const isOverAvailable = breakdown ? displayQuantity > effectiveAvailable : false;
+                const isHighlighted = highlightedItemId === item.id;
 
-                            // Full view for draft quotes
-                            return (
-                              <div
-                                id={`quote-item-${item.id}`}
-                                key={item.id}
-                                className={`p-2.5 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
-                                  isHighlighted ? "ring-2 ring-blue-500 ring-offset-2" : ""
-                                }`}
-                              >
-                                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                                      <h3 className="font-medium text-gray-900 truncate">
-                                        {item.item_name || "Unknown Item"}
-                                      </h3>
-                                      {!isLoadingAvailabilities && isOverAvailable && (
-                                        <span
-                                          className={`px-2 py-0.5 text-xs rounded whitespace-nowrap ${
-                                            effectiveAvailable === 0
-                                              ? "bg-red-100 text-red-800"
-                                              : "bg-yellow-100 text-yellow-800"
-                                          }`}
-                                        >
-                                          Over available ({effectiveAvailable} effective
-                                          available)
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-1">
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          onClick={() => {
-                                            const newQty = Math.max(0, displayQuantity - 1);
-                                            updateQuantity(item.id, newQty);
-                                          }}
-                                          disabled={displayQuantity <= 0}
-                                          className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                          <svg
-                                            className="w-4 h-4"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            viewBox="0 0 24 24"
-                                          >
-                                            <path
-                                              strokeLinecap="round"
-                                              strokeLinejoin="round"
-                                              strokeWidth={2}
-                                              d="M20 12H4"
-                                            />
-                                          </svg>
-                                        </button>
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          step="1"
-                                          value={
-                                            localQuantityStr ?? item.quantity.toString()
-                                          }
-                                          onChange={(e) => {
-                                            const value = e.target.value;
-                                            // Allow empty string for typing
-                                            if (value === "") {
-                                              // Cancel any pending debounce timer
-                                              const existingTimer =
-                                                debounceTimersRef.current.get(item.id);
-                                              if (existingTimer) {
-                                                clearTimeout(existingTimer);
-                                                debounceTimersRef.current.delete(item.id);
-                                              }
-                                              setLocalQuantities((prev) => {
-                                                const newMap = new Map(prev);
-                                                newMap.set(item.id, "");
-                                                return newMap;
-                                              });
-                                              return;
-                                            }
-                                            const numValue = parseInt(value, 10);
-                                            // Only update if it's a valid integer >= 0
-                                            if (!Number.isNaN(numValue) && numValue >= 0) {
-                                              updateQuantity(item.id, numValue);
-                                            }
-                                          }}
-                                          onBlur={(e) => {
-                                            const value = e.target.value;
-                                            // On blur, if empty or invalid, set to 0
-                                            const numValue = parseInt(value, 10);
-                                            if (Number.isNaN(numValue) || numValue < 0) {
-                                              updateQuantity(item.id, 0);
-                                            }
-                                          }}
-                                          className="w-16 sm:w-16 px-2 py-1.5 sm:py-1 text-center font-medium border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                        />
-                                        <button
-                                          onClick={() => {
-                                            const newQty = displayQuantity + 1;
-                                            updateQuantity(item.id, newQty);
-                                          }}
-                                          className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors"
-                                        >
-                                          <svg
-                                            className="w-4 h-4"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            viewBox="0 0 24 24"
-                                          >
-                                            <path
-                                              strokeLinecap="round"
-                                              strokeLinejoin="round"
-                                              strokeWidth={2}
-                                              d="M12 4v16m8-8H4"
-                                            />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                      <span className="whitespace-nowrap">
-                                        × ${item.unit_price_snapshot.toFixed(2)}
-                                      </span>
-                                      <span className="whitespace-nowrap">
-                                        × {numberOfDays} day{numberOfDays !== 1 ? "s" : ""}
-                                      </span>
-                                    </div>
-                                    {/* Availability breakdown - only show when data is loaded */}
-                                    {!isLoadingAvailabilities && breakdown && (
-                                    <div className="mt-1 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-gray-500">
-                                      <span className="whitespace-nowrap">
-                                        <span className="font-medium text-gray-700">
-                                          {breakdown.effectiveAvailable !== undefined
-                                            ? "Effective Available:"
-                                            : "Available:"}
-                                        </span>{" "}
-                                        {breakdown.effectiveAvailable !== undefined
-                                          ? breakdown.effectiveAvailable
-                                          : breakdown.available}
-                                      </span>
-                                      {breakdown.reservedInOverlappingEvents !==
-                                        undefined &&
-                                        breakdown.reservedInOverlappingEvents > 0 && (
-                                          <span className="whitespace-nowrap">
-                                            <span className="font-medium text-gray-700">
-                                              Reserved in overlapping events:
-                                            </span>{" "}
-                                            {breakdown.reservedInOverlappingEvents}
-                                          </span>
-                                        )}
-                                      {realTimeReserved > 0 && (
-                                        <span className="whitespace-nowrap">
-                                          <span className="font-medium text-gray-700">
-                                            Reserved:
-                                          </span>{" "}
-                                          {realTimeReserved}
-                                        </span>
-                                      )}
-                                      {/* Only show In-Transit for serialized items */}
-                                      {item.item_is_serialized &&
-                                        breakdown.inTransit > 0 && (
-                                          <span className="whitespace-nowrap">
-                                            <span className="font-medium text-gray-700">
-                                              In-Transit:
-                                            </span>{" "}
-                                            {breakdown.inTransit}
-                                          </span>
-                                        )}
-                                      {breakdown.outOfService > 0 && (
-                                        <span className="whitespace-nowrap">
-                                          <span className="font-medium text-gray-700">
-                                            Out-of-Service:
-                                          </span>{" "}
-                                          {breakdown.outOfService}
-                                        </span>
-                                      )}
-                                      <span className="whitespace-nowrap">
-                                        <span className="font-medium text-gray-700">
-                                          Total:
-                                        </span>{" "}
-                                        {breakdown.total}
-                                      </span>
-                                    </div>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center justify-between sm:justify-end gap-2 sm:flex-col sm:items-end">
-                                    <div className="text-right sm:text-right">
-                                      <div className="text-sm font-semibold text-gray-900">
-                                        ${lineTotal.toFixed(2)}
-                                      </div>
-                                      <div className="text-xs text-gray-500">
-                                        Line total
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={() => handleDeleteItem(item.id)}
-                                      className="p-2 sm:p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors flex-shrink-0"
-                                    >
-                                      <svg
-                                        className="w-5 h-5"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        viewBox="0 0 24 24"
-                                      >
-                                        <path
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                          strokeWidth={2}
-                                          d="M6 18L18 6M6 6l12 12"
-                                        />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
+                // Full view for draft quotes
+                return (
+                  <div
+                    id={`quote-item-${item.id}`}
+                    key={item.id}
+                    className={`p-2.5 bg-gray-50 rounded-lg border border-gray-200 transition-all ${
+                      isHighlighted ? "ring-2 ring-blue-500 ring-offset-2" : ""
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2.5">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <h3 className="font-medium text-gray-900 truncate">
+                            {item.item_name || "Unknown Item"}
+                          </h3>
+                          {!isLoadingAvailabilities && isOverAvailable && (
+                            <span
+                              className={`px-2 py-0.5 text-xs rounded whitespace-nowrap ${
+                                effectiveAvailable === 0
+                                  ? "bg-red-100 text-red-800"
+                                  : "bg-yellow-100 text-yellow-800"
+                              }`}
+                            >
+                              Over available ({effectiveAvailable} effective
+                              available)
+                            </span>
+                          )}
                         </div>
-                      </QuoteDropZone>
+                        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-1">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                const newQty = Math.max(0, displayQuantity - 1);
+                                updateQuantity(item.id, newQty);
+                              }}
+                              disabled={displayQuantity <= 0}
+                              className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M20 12H4"
+                                />
+                              </svg>
+                            </button>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={
+                                localQuantityStr ?? item.quantity.toString()
+                              }
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                // Allow empty string for typing
+                                if (value === "") {
+                                  // Cancel any pending debounce timer
+                                  const existingTimer =
+                                    debounceTimersRef.current.get(item.id);
+                                  if (existingTimer) {
+                                    clearTimeout(existingTimer);
+                                    debounceTimersRef.current.delete(item.id);
+                                  }
+                                  setLocalQuantities((prev) => {
+                                    const newMap = new Map(prev);
+                                    newMap.set(item.id, "");
+                                    return newMap;
+                                  });
+                                  return;
+                                }
+                                const numValue = parseInt(value, 10);
+                                // Only update if it's a valid integer >= 0
+                                if (!Number.isNaN(numValue) && numValue >= 0) {
+                                  updateQuantity(item.id, numValue);
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const value = e.target.value;
+                                // On blur, if empty or invalid, set to 0
+                                const numValue = parseInt(value, 10);
+                                if (Number.isNaN(numValue) || numValue < 0) {
+                                  updateQuantity(item.id, 0);
+                                }
+                              }}
+                              className="w-16 sm:w-16 px-2 py-1.5 sm:py-1 text-center font-medium border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                              onClick={() => {
+                                const newQty = displayQuantity + 1;
+                                updateQuantity(item.id, newQty);
+                              }}
+                              className="w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center rounded border border-gray-300 hover:bg-gray-100 transition-colors"
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M12 4v16m8-8H4"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                          <span className="whitespace-nowrap">
+                            × ${item.unit_price_snapshot.toFixed(2)}
+                          </span>
+                          <span className="whitespace-nowrap">
+                            × {numberOfDays} day{numberOfDays !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        {/* Availability breakdown - only show when data is loaded */}
+                        {!isLoadingAvailabilities && breakdown && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-gray-500">
+                          <span className="whitespace-nowrap">
+                            <span className="font-medium text-gray-700">
+                              {breakdown.effectiveAvailable !== undefined
+                                ? "Effective Available:"
+                                : "Available:"}
+                            </span>{" "}
+                            {breakdown.effectiveAvailable !== undefined
+                              ? breakdown.effectiveAvailable
+                              : breakdown.available}
+                          </span>
+                          {breakdown.reservedInOverlappingEvents !==
+                            undefined &&
+                            breakdown.reservedInOverlappingEvents > 0 && (
+                              <span className="whitespace-nowrap">
+                                <span className="font-medium text-gray-700">
+                                  Reserved in overlapping events:
+                                </span>{" "}
+                                {breakdown.reservedInOverlappingEvents}
+                              </span>
+                            )}
+                          {realTimeReserved > 0 && (
+                            <span className="whitespace-nowrap">
+                              <span className="font-medium text-gray-700">
+                                Reserved:
+                              </span>{" "}
+                              {realTimeReserved}
+                            </span>
+                          )}
+                          {/* Only show In-Transit for serialized items */}
+                          {item.item_is_serialized &&
+                            breakdown.inTransit > 0 && (
+                              <span className="whitespace-nowrap">
+                                <span className="font-medium text-gray-700">
+                                  In-Transit:
+                                </span>{" "}
+                                {breakdown.inTransit}
+                              </span>
+                            )}
+                          {breakdown.outOfService > 0 && (
+                            <span className="whitespace-nowrap">
+                              <span className="font-medium text-gray-700">
+                                Out-of-Service:
+                              </span>{" "}
+                              {breakdown.outOfService}
+                            </span>
+                          )}
+                          <span className="whitespace-nowrap">
+                            <span className="font-medium text-gray-700">
+                              Total:
+                            </span>{" "}
+                            {breakdown.total}
+                          </span>
+                        </div>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between sm:justify-end gap-2 sm:flex-col sm:items-end">
+                        <div className="text-right sm:text-right">
+                          <div className="text-sm font-semibold text-gray-900">
+                            ${lineTotal.toFixed(2)}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Line total
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteItem(item.id)}
+                          className="p-2 sm:p-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                        >
+                          <svg
+                            className="w-5 h-5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M6 18L18 6M6 6l12 12"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              </div>
+            </QuoteDropZone>
                     )}
                     </>
                   ) : !isReadOnly ? (
