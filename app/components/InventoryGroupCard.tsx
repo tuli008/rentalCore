@@ -1149,7 +1149,10 @@ export default function InventoryGroupCard({
                 <tr
                   key={item.id}
                   onClick={() => setSelectedItem(item)}
+                  onTouchEnd={() => setSelectedItem(item)}
+                  onPointerUp={() => setSelectedItem(item)}
                   className="border-b border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer"
+                  style={{ touchAction: "manipulation" }}
                 >
                   <td className="w-4 py-3 px-3 sm:px-4"></td>
                   <td className="py-2 px-3 sm:px-4">

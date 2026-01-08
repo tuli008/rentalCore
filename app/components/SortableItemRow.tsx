@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { InventoryItem } from "@/lib/inventory";
@@ -18,6 +18,7 @@ export default function SortableItemRow({
   onArchive,
 }: SortableItemRowProps) {
   const [mounted, setMounted] = useState(false);
+  const lastTouchTsRef = useRef<number>(0);
 
   useEffect(() => {
     setMounted(true);
@@ -38,11 +39,31 @@ export default function SortableItemRow({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const activate = () => onItemClick(item);
+
   return (
     <tr
       ref={setNodeRef}
-      style={style}
-      onClick={() => onItemClick(item)}
+      style={{
+        ...style,
+        touchAction: "manipulation",
+      }}
+      // iOS/table rows can be flaky; make activation explicit for touch + mouse.
+      onTouchEnd={() => {
+        lastTouchTsRef.current = Date.now();
+        activate();
+      }}
+      onPointerUp={(e) => {
+        // ignore synthetic click after touch
+        if (Date.now() - lastTouchTsRef.current < 600) return;
+        // only primary button
+        if ("button" in e && (e as any).button !== 0) return;
+        activate();
+      }}
+      onClick={() => {
+        if (Date.now() - lastTouchTsRef.current < 600) return;
+        activate();
+      }}
       className="border-b border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer group"
     >
       <td className="w-4 py-3 px-3 sm:px-4">
