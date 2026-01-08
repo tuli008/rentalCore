@@ -74,7 +74,7 @@ export default function InventoryPageContent({
   }));
 
   return (
-    <div className="min-h-screen bg-gray-50 w-full overflow-x-hidden">
+    <div className="min-h-screen bg-gray-50 w-full">
       {/* Main Content Area - with right margin on desktop for sidebar */}
       <div className="w-full lg:mr-96">
         <div className="w-full max-w-7xl mx-auto p-4 sm:p-8">

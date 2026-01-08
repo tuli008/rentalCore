@@ -1,5 +1,9 @@
 "use client";
 
+import { useState } from "react";
+import BarcodeScanner from "@/app/components/barcode/BarcodeScanner";
+import type { UnitInfo } from "@/app/actions/units";
+
 interface Unit {
   id: string;
   serial_number: string;
@@ -13,6 +17,8 @@ interface UnitsTableProps {
   isLoadingUnits: boolean;
   updatingUnitId: string | null;
   onUnitStatusChange: (unitId: string, currentStatus: string) => void;
+  itemId?: string;
+  onUnitScanned?: () => void; // Callback to refresh units after scanning
 }
 
 export default function UnitsTable({
@@ -20,28 +26,71 @@ export default function UnitsTable({
   isLoadingUnits,
   updatingUnitId,
   onUnitStatusChange,
+  itemId,
+  onUnitScanned,
 }: UnitsTableProps) {
+  const [showScanner, setShowScanner] = useState(false);
+
+  const handleScanSuccess = (unit: UnitInfo) => {
+    // If this unit belongs to the current item, refresh the list
+    if (unit.item_id === itemId) {
+      onUnitScanned?.();
+    }
+    // Close scanner after successful scan
+    setShowScanner(false);
+  };
+
   if (isLoadingUnits) {
     return (
       <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-3">Units</h4>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-sm font-semibold text-gray-700">Units</h4>
+        </div>
         <div className="text-sm text-gray-500 py-4">Loading units...</div>
-      </div>
-    );
-  }
-
-  if (units.length === 0) {
-    return (
-      <div>
-        <h4 className="text-sm font-semibold text-gray-700 mb-3">Units</h4>
-        <div className="text-sm text-gray-500 py-4">No units found</div>
       </div>
     );
   }
 
   return (
     <div>
-      <h4 className="text-sm font-semibold text-gray-700 mb-3">Units</h4>
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-semibold text-gray-700">Units</h4>
+        <button
+          onClick={() => setShowScanner(!showScanner)}
+          className="px-2 sm:px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors flex items-center gap-1.5 whitespace-nowrap"
+        >
+          <svg
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1z"
+            />
+          </svg>
+          {showScanner ? "Hide Scanner" : "Scan Barcode"}
+        </button>
+      </div>
+
+      {/* Barcode Scanner */}
+      {showScanner && (
+        <div className="mb-4 p-2 sm:p-4 bg-gray-50 border border-gray-200 rounded-lg w-full overflow-x-hidden">
+          <BarcodeScanner
+            onScanSuccess={handleScanSuccess}
+            allowStatusUpdate={true}
+          />
+        </div>
+      )}
+
+      {units.length === 0 && !showScanner && (
+        <div className="text-sm text-gray-500 py-4">No units found</div>
+      )}
+
+      {units.length > 0 && (
       <div className="max-h-96 overflow-y-auto overflow-x-auto border border-gray-200 rounded-md">
         <table className="w-full border-collapse text-sm min-w-[600px]">
           <thead className="sticky top-0 bg-white z-10">
@@ -128,6 +177,7 @@ export default function UnitsTable({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

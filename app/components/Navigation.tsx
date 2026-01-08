@@ -88,6 +88,16 @@ export default function Navigation() {
             >
               Events
             </Link>
+            <Link
+              href="/scanner"
+              className={`inline-flex items-center px-1 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                isActive("/scanner")
+                  ? "border-white text-white"
+                  : "border-transparent text-blue-100 hover:text-white hover:border-blue-300"
+              }`}
+            >
+              Scanner
+            </Link>
             <AdminLink />
           </div>
           <div className="flex items-center gap-4 ml-4">

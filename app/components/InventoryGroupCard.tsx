@@ -768,12 +768,12 @@ export default function InventoryGroupCard({
 
     if (selectedItem) {
       document.addEventListener("keydown", handleEscape);
-      document.body.style.overflow = "hidden";
+      // NEVER lock body scroll - it breaks scrolling on tablet/mobile
+      // Let the browser handle scrolling naturally
     }
 
     return () => {
       document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = "unset";
     };
   }, [selectedItem, editingField]);
 

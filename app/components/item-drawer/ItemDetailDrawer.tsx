@@ -124,11 +124,11 @@ export default function ItemDetailDrawer({
         }}
       />
 
-      {/* Drawer Panel */}
+      {/* Drawer Panel - On tablet, use absolute positioning to allow horizontal scroll */}
       <div
-        className={`fixed inset-y-0 right-0 w-full sm:w-full md:max-w-lg bg-white shadow-xl z-50 transform transition-transform duration-300 ease-in-out ${
+        className={`fixed inset-y-0 right-0 w-full sm:w-full md:w-[420px] lg:w-[480px] bg-white shadow-xl z-50 transform transition-transform duration-300 ease-in-out ${
           isDrawerOpen ? "translate-x-0" : "translate-x-full"
-        }`}
+        } md:fixed`}
       >
         <div className="h-full flex flex-col">
           {/* Header */}

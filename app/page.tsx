@@ -816,19 +816,19 @@ export default async function Home() {
   return (
     <main className="min-h-screen bg-gray-50">
       <InventoryPageContent
-          groups={inventoryGroups}
-          createGroup={createGroup}
-          createItem={createItem}
-          updateItem={updateItem}
-          updateStock={updateStock}
-          addMaintenanceLog={addMaintenanceLog}
-          updateUnitStatus={updateUnitStatus}
-          reorderGroups={reorderGroups}
-          reorderItems={reorderItems}
-          deleteItem={deleteItem}
-          deleteGroup={deleteGroup}
-          updateGroup={updateGroup}
-        />
+        groups={inventoryGroups}
+        createGroup={createGroup}
+        createItem={createItem}
+        updateItem={updateItem}
+        updateStock={updateStock}
+        addMaintenanceLog={addMaintenanceLog}
+        updateUnitStatus={updateUnitStatus}
+        reorderGroups={reorderGroups}
+        reorderItems={reorderItems}
+        deleteItem={deleteItem}
+        deleteGroup={deleteGroup}
+        updateGroup={updateGroup}
+      />
     </main>
   );
 }
