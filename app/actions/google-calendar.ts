@@ -123,7 +123,7 @@ Assigned via Rental Core.
     // If google_event_id exists, delete old events first
     if (assignment.google_event_id) {
       // Parse comma-separated event IDs or single ID
-      const eventIds = assignment.google_event_id.split(',').map(id => id.trim()).filter(id => id);
+      const eventIds = assignment.google_event_id.split(',').map((id: string) => id.trim()).filter((id: string) => id);
       
       for (const eventId of eventIds) {
         const deleteResult = await deleteGoogleCalendarEvent(
@@ -268,7 +268,7 @@ export async function removeCrewAssignmentFromGoogleCalendar(
     }
 
     // Parse comma-separated event IDs or single ID
-    const eventIds = assignment.google_event_id.split(',').map(id => id.trim()).filter(id => id);
+    const eventIds = assignment.google_event_id.split(',').map((id: string) => id.trim()).filter((id: string) => id);
     let allDeleted = true;
     let lastError: string | undefined;
 
