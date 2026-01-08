@@ -6,6 +6,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   DragEndEvent,
@@ -74,14 +75,32 @@ export default function SortableGroupsList({
     null,
   );
   const [mounted, setMounted] = useState(false);
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
 
   // Only render DndContext on client to avoid hydration mismatch
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  // On iPad/mobile, dnd-kit sensors can steal the scroll gesture.
+  // Disable drag-and-drop for coarse pointers so vertical scroll always works.
+  useEffect(() => {
+    try {
+      const coarse =
+        (typeof window !== "undefined" &&
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(pointer: coarse)").matches) ||
+        (typeof window !== "undefined" && "ontouchstart" in window);
+      setIsCoarsePointer(Boolean(coarse));
+    } catch {
+      setIsCoarsePointer(false);
+    }
+  }, []);
+
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    // On iPad/touch, avoid hijacking scroll: only start drag after an intentional move/press.
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
@@ -132,32 +151,34 @@ export default function SortableGroupsList({
   // Use draggingGroups if set (during drag), otherwise use initialGroups (source of truth)
   const groupsToRender = draggingGroups || initialGroups;
 
-  // Render without DndContext during SSR to avoid hydration mismatch
-  if (!mounted) {
-    return (
-      <>
-        {groupsToRender.map((group) => (
-          <SortableGroup
-            key={group.id}
-            group={group}
-            createItem={createItem}
-            updateItem={updateItem}
-            updateStock={updateStock}
-            addMaintenanceLog={addMaintenanceLog}
-            updateUnitStatus={updateUnitStatus}
-            reorderItems={reorderItems}
-            deleteItem={deleteItem}
-            deleteGroup={deleteGroup}
-            updateGroup={updateGroup}
-            itemIdToOpen={itemIdToOpen}
-            onItemOpened={onItemOpened}
-            sortOrder={sortOrder}
-            isCollapsed={allCollapsed}
-            pageSize={pageSize}
-          />
-        ))}
-      </>
-    );
+  const content = (
+    <>
+      {groupsToRender.map((group) => (
+        <SortableGroup
+          key={group.id}
+          group={group}
+          createItem={createItem}
+          updateItem={updateItem}
+          updateStock={updateStock}
+          addMaintenanceLog={addMaintenanceLog}
+          updateUnitStatus={updateUnitStatus}
+          reorderItems={reorderItems}
+          deleteItem={deleteItem}
+          deleteGroup={deleteGroup}
+          updateGroup={updateGroup}
+          itemIdToOpen={itemIdToOpen}
+          onItemOpened={onItemOpened}
+          sortOrder={sortOrder}
+          isCollapsed={allCollapsed}
+          pageSize={pageSize}
+        />
+      ))}
+    </>
+  );
+
+  // Render without DndContext during SSR OR on touch devices (prevents scroll hijack)
+  if (!mounted || isCoarsePointer) {
+    return content;
   }
 
   return (
@@ -170,26 +191,7 @@ export default function SortableGroupsList({
         items={groupsToRender.map((g) => g.id)}
         strategy={verticalListSortingStrategy}
       >
-        {groupsToRender.map((group) => (
-          <SortableGroup
-            key={group.id}
-            group={group}
-            createItem={createItem}
-            updateItem={updateItem}
-            updateStock={updateStock}
-            addMaintenanceLog={addMaintenanceLog}
-            updateUnitStatus={updateUnitStatus}
-            reorderItems={reorderItems}
-            deleteItem={deleteItem}
-            deleteGroup={deleteGroup}
-            updateGroup={updateGroup}
-            itemIdToOpen={itemIdToOpen}
-            onItemOpened={onItemOpened}
-            sortOrder={sortOrder}
-            isCollapsed={allCollapsed}
-            pageSize={pageSize}
-          />
-        ))}
+        {content}
       </SortableContext>
     </DndContext>
   );

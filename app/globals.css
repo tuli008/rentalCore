@@ -15,50 +15,21 @@
 }
 
 html {
-  overflow-x: auto;
-  overflow-y: auto;
+  height: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  overflow-x: auto;
-  overflow-y: auto;
+  height: 100%;
+  overflow: hidden; /* app scroll is handled by #app-main-scroll */
 }
 
-/* Ensure mobile layout doesn't show desktop sidebar */
-@media (max-width: 1023px) {
-  /* Force hide fixed right sidebars on mobile (but not mobile drawers which have lg:hidden) */
-  div[class*="fixed"][class*="right-0"]:not([class*="lg:hidden"]) {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-  
-  /* Also hide any sidebar with w-96 (desktop sidebar width) */
-  div[class*="fixed"][class*="right-0"][class*="w-96"] {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-  
-  /* Ensure main content takes full width on mobile */
-  main, 
-  [class*="max-w-7xl"],
-  div[class*="max-w-7xl"] {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin-right: 0 !important;
-    padding-right: 0 !important;
-  }
-  
-  /* Remove any right margin on mobile */
-  [class*="lg:mr-96"],
-  div[class*="lg:mr-96"] {
-    margin-right: 0 !important;
-  }
+/* iOS/iPad: allow smooth scrolling in the single app scroll container */
+#app-main-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 /* Force black text in all input and textarea fields - highest priority */

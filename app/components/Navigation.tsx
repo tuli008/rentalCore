@@ -44,7 +44,7 @@ export default function Navigation() {
   const isActive = (path: string) => pathname === path;
 
   return (
-    <nav className="bg-blue-600 border-b border-blue-700 sticky top-0 z-50">
+    <nav className="bg-blue-600 border-b border-blue-700">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="h-12 flex items-center justify-between">
           <div className="flex items-center gap-6 overflow-x-auto w-full">

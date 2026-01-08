@@ -8,6 +8,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   DragEndEvent,
@@ -172,6 +173,7 @@ export default function InventoryGroupCard({
     null,
   );
   const [mounted, setMounted] = useState(false);
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
   const router = useRouter();
   const [showDeleteItemModal, setShowDeleteItemModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
@@ -197,9 +199,26 @@ export default function InventoryGroupCard({
     setMounted(true);
   }, []);
 
+  // On iPad/mobile, dnd-kit sensors can steal the scroll gesture.
+  // Disable item drag-and-drop for coarse pointers so vertical scroll always works.
+  useEffect(() => {
+    try {
+      const coarse =
+        (typeof window !== "undefined" &&
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(pointer: coarse)").matches) ||
+        (typeof window !== "undefined" && "ontouchstart" in window);
+      setIsCoarsePointer(Boolean(coarse));
+    } catch {
+      setIsCoarsePointer(false);
+    }
+  }, []);
+
   // Sensors for drag and drop
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    // On iPad/touch, avoid hijacking scroll: only start drag after an intentional move/press.
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     }),
@@ -995,13 +1014,13 @@ export default function InventoryGroupCard({
         </div>
       </div>
 
-      {mounted ? (
+      {mounted && !isCoarsePointer ? (
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
           onDragEnd={handleItemDragEnd}
         >
-          <div className="overflow-x-auto">
+          <div className="w-full overflow-x-auto -mx-4 sm:-mx-6 px-4 sm:px-6">
             <table className="w-full border-collapse min-w-[800px]">
               <thead>
                 <tr className="border-b-2 border-gray-300">
@@ -1102,7 +1121,7 @@ export default function InventoryGroupCard({
           )}
         </DndContext>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto -mx-4 sm:-mx-6 px-4 sm:px-6">
           <table className="w-full border-collapse min-w-[800px]">
             <thead>
               <tr className="border-b-2 border-gray-300">

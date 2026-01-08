@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { InventoryGroup } from "@/lib/inventory";
 import SortableGroupsList from "./SortableGroupsList";
 import InventorySidebar from "./InventorySidebar";
+import { useLockAppScroll } from "@/app/hooks/useLockAppScroll";
 
 export type SortOrder = "a-z" | "availability";
 
@@ -54,7 +55,9 @@ export default function InventoryPageContent({
   const [sortOrder, setSortOrder] = useState<SortOrder>("a-z");
   const [allCollapsed, setAllCollapsed] = useState(false);
   const [pageSize, setPageSize] = useState<number>(2);
-  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+
+  useLockAppScroll(isFiltersOpen);
 
   // Calculate total items across all groups
   const totalItems = groups.reduce((sum, group) => sum + group.items.length, 0);
@@ -74,10 +77,8 @@ export default function InventoryPageContent({
   }));
 
   return (
-    <div className="min-h-screen bg-gray-50 w-full">
-      {/* Main Content Area - with right margin on desktop for sidebar */}
-      <div className="w-full lg:mr-96">
-        <div className="w-full max-w-7xl mx-auto p-4 sm:p-8">
+    <div className="bg-gray-50 w-full">
+      <div className="w-full max-w-7xl mx-auto p-4 sm:p-8 min-w-0">
           {/* Header with Toolbar */}
           <div className="mb-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -88,11 +89,11 @@ export default function InventoryPageContent({
             
             {/* Toolbar */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-4">
-              {/* Mobile: Filters button */}
-              <div className="flex items-center justify-end lg:hidden">
+              {/* Filters button (drawer overlay) */}
+              <div className="flex items-center justify-end">
                 <button
                   type="button"
-                  onClick={() => setIsMobileFiltersOpen(true)}
+                  onClick={() => setIsFiltersOpen(true)}
                   className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
                 >
                   Filters
@@ -194,67 +195,60 @@ export default function InventoryPageContent({
           </div>
 
           {/* Groups List */}
-          <SortableGroupsList
-            groups={groups}
-            createItem={createItem}
-            updateItem={updateItem}
-            updateStock={updateStock}
-            addMaintenanceLog={addMaintenanceLog}
-            updateUnitStatus={updateUnitStatus}
-            reorderGroups={reorderGroups}
-            reorderItems={reorderItems}
-            deleteItem={deleteItem}
-            deleteGroup={deleteGroup}
-            updateGroup={updateGroup}
-            itemIdToOpen={itemIdToOpen}
-            onItemOpened={handleItemOpened}
-            sortOrder={sortOrder}
-            allCollapsed={allCollapsed}
-            pageSize={pageSize}
-          />
+          <div className="overflow-x-auto min-w-0">
+            <SortableGroupsList
+              groups={groups}
+              createItem={createItem}
+              updateItem={updateItem}
+              updateStock={updateStock}
+              addMaintenanceLog={addMaintenanceLog}
+              updateUnitStatus={updateUnitStatus}
+              reorderGroups={reorderGroups}
+              reorderItems={reorderItems}
+              deleteItem={deleteItem}
+              deleteGroup={deleteGroup}
+              updateGroup={updateGroup}
+              itemIdToOpen={itemIdToOpen}
+              onItemOpened={handleItemOpened}
+              sortOrder={sortOrder}
+              allCollapsed={allCollapsed}
+              pageSize={pageSize}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Right Sidebar (Desktop) */}
-      <div className="fixed right-0 top-12 bottom-0 w-96 z-40 hidden lg:block border-l border-gray-200 bg-white overflow-y-auto">
-        <InventorySidebar
-          onItemSelect={handleItemSelect}
-          groups={groupsForSidebar}
-          variant="desktop"
-        />
-      </div>
-
-      {/* Filters Drawer (Mobile) */}
-      {isMobileFiltersOpen && (
-        <div 
-          className="fixed inset-0 z-[9999] lg:hidden"
-          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
-        >
+      {/* TRUE Drawer Overlay (all breakpoints) */}
+      {isFiltersOpen && (
+        <div className="fixed inset-0 z-50">
           {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setIsMobileFiltersOpen(false)}
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setIsFiltersOpen(false)}
             aria-hidden="true"
           />
-          {/* Drawer Panel */}
-          <div 
-            className="absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl max-h-[85vh] overflow-hidden"
-            style={{ maxHeight: '85vh' }}
-          >
-            {/* Drag handle */}
-            <div className="flex justify-center py-3 border-b border-gray-100">
-              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+
+          {/* Drawer */}
+          <div className="absolute right-0 top-0 h-full w-[380px] max-w-[90vw] bg-white shadow-xl border-l overflow-y-auto">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div className="font-semibold text-gray-900">Filters</div>
+              <button
+                type="button"
+                onClick={() => setIsFiltersOpen(false)}
+                className="p-2 rounded hover:bg-gray-100 text-gray-700"
+                aria-label="Close filters"
+              >
+                ✕
+              </button>
             </div>
-            {/* Scrollable content */}
-            <div className="overflow-y-auto" style={{ maxHeight: 'calc(85vh - 48px)' }}>
+            <div className="p-4">
               <InventorySidebar
                 onItemSelect={(itemId, groupId) => {
                   handleItemSelect(itemId, groupId);
-                  setIsMobileFiltersOpen(false);
+                  setIsFiltersOpen(false);
                 }}
                 groups={groupsForSidebar}
-                variant="mobile"
-                onClose={() => setIsMobileFiltersOpen(false)}
+                variant="desktop"
+                onClose={() => setIsFiltersOpen(false)}
               />
             </div>
           </div>

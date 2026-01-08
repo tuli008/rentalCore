@@ -34,8 +34,19 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Navigation />
-        {children}
+        {/* Use explicit 100dvh so the app always has a bounded height for the single scroll container */}
+        <div className="h-[100dvh] bg-slate-50 flex flex-col">
+          <header className="sticky top-0 z-40 flex-shrink-0">
+            <Navigation />
+          </header>
+          {/* ONLY vertical scroll area for the entire app */}
+          <main
+            id="app-main-scroll"
+            className="flex-1 min-h-0 overflow-y-scroll"
+          >
+            {children}
+          </main>
+        </div>
       </body>
     </html>
   );
